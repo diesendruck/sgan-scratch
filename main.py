@@ -92,7 +92,7 @@ sess.run(init_op)
 
 # Helper function for summary output.
 def round_list(l):
-    return [np.round(float(i)) for i in l]
+    return [round(i, 3) for i in l]
 
 for it in range(max_iter):
     # Run training.
@@ -124,7 +124,6 @@ for it in range(max_iter):
         d_grid = np.reshape(grid_scores, [grid_gran, grid_gran])
         #im = ax.pcolormesh(x_grid, y_grid, d_grid, vmin=-1, vmax=1)
         dx = round(x_grid[1] - x_grid[0], 1)
-        dx = 0.4
         xx, yy = np.mgrid[slice(x_lims[0], x_lims[1]+dx, dx),
                           slice(y_lims[0], y_lims[1]+dx, dx)]
         im = ax.pcolor(xx, yy, d_grid, vmin=-1, vmax=1)
