@@ -1,10 +1,11 @@
 import copy
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import numpy as np
 import pdb
 import sys
 import tensorflow as tf
-
-from matplotlib import pyplot as plt
 
 # Constants for controlling runs.
 max_iter = 1500
@@ -122,6 +123,7 @@ for it in range(max_iter):
         fig, ax = plt.subplots()
         d_grid = np.reshape(grid_scores, [grid_gran, grid_gran])
         #im = ax.pcolormesh(x_grid, y_grid, d_grid, vmin=-1, vmax=1)
+        dx = round(x_grid[1] - x_grid[0], 1)
         dx = 0.4
         xx, yy = np.mgrid[slice(x_lims[0], x_lims[1]+dx, dx),
                           slice(y_lims[0], y_lims[1]+dx, dx)]
