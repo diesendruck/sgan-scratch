@@ -9,22 +9,36 @@ import tensorflow as tf
 
 # Constants for controlling runs.
 max_iter = 1000
-d_per_iter = 200
-g_per_iter = 50
-x_lims = [-4, 2]
-y_lims = [-2, 4]
+d_per_iter = 100
+g_per_iter = 100
+x_lims = [-5., 1.]
+y_lims = [-1., 5.]
 d_update = True
 g_update = True if d_update == False else False
 # Define real data points.
 data_n = 200
 data_dim = 2
+
+#Data generation
 center = [-2, 2]
-variance = 0.1
-points = np.random.multivariate_normal(center, np.identity(data_dim) * variance, data_n)
-points = np.asarray(points)
+radius = 1.
+variance = 0.01
+# points = np.random.multivariate_normal(center, np.identity(data_dim) * variance, data_n)
+# points = np.asarray(points)
+theta = np.random.uniform(0, 2*np.pi, data_n)
+r = np.random.normal(radius, variance, data_n)
+points = np.array([center[0] + r * np.cos(theta), center[1] + r * np.sin(theta)]).transpose()
+
+# Define fuzzy dumb generator size and architecture.
+f_n = data_n
+f_mean = np.mean(points, 0)
+f_var = np.cov(points.transpose())
+f_blur = 4.   
+assert f_blur > 1., "f_blur not greater than 1."
+fuzzy = np.random.multivariate_normal(f_mean, f_var * f_blur, f_n)
 
 # Define generator size and architecture.
-g_n = 200
+g_n = 100
 z_dim = 3
 g_layers_depth = 5
 g_layers_width = 5
@@ -40,15 +54,16 @@ grid_n = len(grid)
 
 # Define discriminator size and architecture.
 # Note: it will take as input both true and generated data.
-d_n = data_n + g_n
-d_layers_depth = 3
-d_layers_width = 3
+d_n = data_n + f_n + g_n
+d_layers_depth = 5
+d_layers_width = 10
 d_activation = tf.nn.tanh
 d_output = 1
 
 # Reset graph and fix random Z input to generator.
 tf.reset_default_graph()
 data = tf.constant(points)
+fuzz = tf.constant(fuzzy)
 Znp = np.random.normal(size=[g_n, z_dim])
 Z = tf.constant(Znp)
 
@@ -70,21 +85,25 @@ for l in range(d_layers_depth):
         W = tf.get_variable("D_Weights" + str(l), shape = [data_dim if l == 0 else d_layers_width, d_output if l == d_layers_depth - 1 else d_layers_width], dtype=tf.float64)
         B = tf.get_variable("D_Bias" + str(l), shape = [d_output if l == d_layers_depth - 1 else d_layers_width], dtype=tf.float64)
         # NOTE: Defines contents of input layer.
-        H = d_activation(tf.add(tf.matmul(tf.concat([grid, data, G], 0) if l == 0 else HD[l - 1][2], W), B))
+        H = d_activation(tf.add(tf.matmul(tf.concat([grid, data, fuzz, G], 0) if l == 0 else HD[l - 1][2], W), B))
         HD[l] = [W, B, H]
 D_scores = HD[-1][2]
 
 # Define discriminator and generator losses.
-D_target = tf.constant([[1.]]*data_n + [[-1.]]*g_n)
+f_penalty = (f_blur - 1.)/(f_blur)  # f_blur >> 1
+D_target = tf.constant([[1]]*data_n + [[-1.]]*f_n + [[-1.]]*g_n)
+Dloss = tf.losses.mean_squared_error(D_scores[grid_n:], D_target, weights=[[1.]]*data_n + [[f_penalty]]*f_n + [[1.]]*g_n)
+# D_target = tf.constant([[1]]*data_n + [[-1.]]*f_n)
+# Dloss = tf.losses.mean_squared_error(D_scores[grid_n:-g_n], D_target)
+
 G_target = tf.constant([[1.]]*g_n)
-Dloss = tf.losses.mean_squared_error(D_scores[grid_n:], D_target)
-Gloss = tf.losses.mean_squared_error(D_scores[grid_n + data_n:], G_target)
+Gloss = tf.losses.mean_squared_error(D_scores[grid_n + data_n + f_n:], G_target)
 
 # Build optimization ops.
-g_vars = [HG[l][j] for j in range(2) for l in range(g_layers_depth)]
 d_vars = [HD[l][j] for j in range(2) for l in range(d_layers_depth)]
-g_train_op = tf.train.AdagradOptimizer(learning_rate=1e-2).minimize(Gloss, var_list=g_vars)
+g_vars = [HG[l][j] for j in range(2) for l in range(g_layers_depth)]
 d_train_op = tf.train.AdagradOptimizer(learning_rate=1e-2).minimize(Dloss, var_list=d_vars)
+g_train_op = tf.train.AdagradOptimizer(learning_rate=1e-2).minimize(Gloss, var_list=g_vars)
 
 # Begin running the model.
 init_op = tf.global_variables_initializer()
@@ -119,15 +138,16 @@ for it in range(max_iter):
         # Run scores and unpack contents for grid, data, and gen.
         scores = sess.run(D_scores)
         grid_scores = scores[:grid_n]
-        data_scores = scores[grid_n:-g_n]
+        data_scores = scores[grid_n:grid_n+data_n]
+        fuzz_scores = scores[grid_n+data_n:-g_n]
         gen_scores = scores[-g_n:]
         
         # Collect summary items for printing.
-        summary_items = [l, round_list(sess.run([Dloss, Gloss])),
+        summary_items = [it, round_list(sess.run([Dloss, Gloss])),
             round_list(points.mean(0)), round_list(generated.mean(0)),
             round_list(points.var(0)), round_list(generated.var(0))]
         si = summary_items
-        print "layer: {}, [d_loss, g_loss]: {}, data_mean: {}, gen_mean: {}, data_var: {}, gen_var: {}".format(si[0], si[1], si[2], si[3], si[4], si[5])
+        print "iteration: {}, [d_loss, g_loss]: {}, data_mean: {}, gen_mean: {}, data_var: {}, gen_var: {}".format(si[0], si[1], si[2], si[3], si[4], si[5])
         
         # Plot results.
         fig, ax = plt.subplots()
@@ -139,8 +159,10 @@ for it in range(max_iter):
         im = ax.pcolor(xx, yy, d_grid, vmin=-1, vmax=1)
         fig.colorbar(im)
         
-        ax.scatter(points[:, 0], points[:, 1], c='cornflowerblue', alpha=0.3, marker="+")
+        ax.scatter(fuzzy[:, 0],  fuzzy[:, 1], c='grey', alpha=0.3, marker='.')
+        ax.scatter(points[:, 0], points[:, 1], c='white', alpha=.3, marker="+")
         ax.scatter(generated[:, 0], generated[:, 1], color='r', alpha=0.3)
+        ax.scatter([-2,-2], [2,2], c='white', alpha=1, marker="+")
         ax.set_xlim(x_lims)
         ax.set_ylim(y_lims)
         fig.savefig('temp/graphs/graph_{}.png'.format(it))
