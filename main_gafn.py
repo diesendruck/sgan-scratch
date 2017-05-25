@@ -3,31 +3,78 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import pdb
+import re
 import sys
 import tensorflow as tf
+from glob import glob
 
-# Constants for controlling runs.
-max_iter = 1000
-d_per_iter = 100
-g_per_iter = 100
-x_lims = [-5., 1.]
-y_lims = [-1., 5.]
+
+# Set configuration parameters.
+max_iter = 50001 
+d_per_iter = 1
+g_per_iter = 2
+x_lims = [-6., 0.]
+y_lims = [0., 6.]
 d_update = True
 g_update = True if d_update == False else False
-# Define real data points.
-data_n = 200
-data_dim = 2
+data_n = 1000  # Number of points in true dataset.
+data_dim = 2  # Dimension of each point in true dataset.
+dataset = "gaussian"  # One of {"gaussian", "concentric", "swissroll"}
+expt = "test_gaussian"
 
-#Data generation
-center = [-2, 2]
-radius = 1.
-variance = 0.01
-# points = np.random.multivariate_normal(center, np.identity(data_dim) * variance, data_n)
-# points = np.asarray(points)
-theta = np.random.uniform(0, 2*np.pi, data_n)
-r = np.random.normal(radius, variance, data_n)
-points = np.array([center[0] + r * np.cos(theta), center[1] + r * np.sin(theta)]).transpose()
+
+def natural_sort(l):
+  """Helper function to sort globbed files naturally."""
+  convert = lambda text: int(text) if text.isdigit() else text.lower()
+  alphanum_key = lambda key: [ convert(c) for c in re.split('([0-9]+)', key) ]
+  return sorted(l, key = alphanum_key)
+
+
+def load_2d_data(dataset, data_n):
+    """Generates nparray of 2d data.
+
+    Args:
+        dataset: String name of dataset.
+        data_n: Int number of points to generate.
+
+    Returns:
+        points: Numpy array of points, of size (data_n, 2).
+    """
+    if dataset == "concentric":
+        center = [-3, 3]
+        radius_1 = 0.5
+        radius_2 = 1.5
+        variance = 0.1
+        theta = np.concatenate(
+            (np.random.uniform(0, 2 * np.pi, data_n / 2),
+             np.random.uniform(0, 2 * np.pi, data_n / 2)), axis=0)
+        radii = np.concatenate(
+            (np.random.normal(radius_1, variance, data_n / 2),
+             np.random.normal(radius_2, variance, data_n / 2)), axis=0)
+        points = np.array([center[0] + radii * np.cos(theta),
+                           center[1] + radii * np.sin(theta)]).transpose()
+    elif dataset == "gaussian":
+        center = [0, 0]
+        variance = 0.1
+        points = np.random.multivariate_normal(
+                center, np.identity(data_dim) * variance, data_n)
+        points = np.asarray(points)
+    elif dataset == "swissroll":
+        center = [0, 0]
+        variance = 0.01
+        num_rolls = 2
+        max_radius = 4
+        theta = np.linspace(0, 2 * np.pi * num_rolls, data_n)
+        radii = (np.linspace(0, max_radius, data_n) +
+                 np.random.normal(0, variance))
+        points = np.array([center[0] + radii * np.cos(theta),
+                           center[1] + radii * np.sin(theta)]).transpose()
+    return points
+
+# Make true data.
+points = load_2d_data(dataset, data_n)
 
 # Define fuzzy dumb generator size and architecture.
 f_n = data_n
@@ -38,7 +85,7 @@ assert f_blur > 1., "f_blur not greater than 1."
 fuzzy = np.random.multivariate_normal(f_mean, f_var * f_blur, f_n)
 
 # Define generator size and architecture.
-g_n = 100
+g_n = 1000
 z_dim = 3
 g_layers_depth = 5
 g_layers_width = 5
@@ -70,23 +117,28 @@ Z = tf.constant(Znp)
 # Build generator out of several hidden layers.
 HG = [None] * g_layers_depth
 for l in range(g_layers_depth):
-        W = tf.get_variable("G_Weights" + str(l), shape = [z_dim if l == 0 else g_layers_width, g_output if l == g_layers_depth - 1 else g_layers_width], dtype=tf.float64)
-        B = tf.get_variable("G_Bias" + str(l), shape = [g_output if l == g_layers_depth - 1 else g_layers_width], dtype=tf.float64)
-        if l == g_layers_depth - 1:
-            H = tf.add(tf.matmul(HG[l - 1][2], W), B)
-        else:
-            H = g_activation(tf.add(tf.matmul(Z if l == 0 else HG[l - 1][2], W), B))
-        HG[l] = [W, B, H]
+    W = tf.get_variable("G_Weights" + str(l), shape = [z_dim if l == 0 else g_layers_width, g_output if l == g_layers_depth - 1 else g_layers_width], dtype=tf.float64)
+    B = tf.get_variable("G_Bias" + str(l), shape = [g_output if l == g_layers_depth - 1 else g_layers_width], dtype=tf.float64)
+    if l == g_layers_depth - 1:
+        H = tf.add(tf.matmul(HG[l - 1][2], W), B)
+
+    else:
+        # NOTE: Defines contents of input layer.
+        H = g_activation(tf.add(tf.matmul(Z if l == 0 else HG[l - 1][2], W), B))
+
+    HG[l] = [W, B, H]
 G = HG[-1][2]
 
 # Build discriminator out of several hidden layers.
 HD = [None] * d_layers_depth
 for l in range(d_layers_depth):
-        W = tf.get_variable("D_Weights" + str(l), shape = [data_dim if l == 0 else d_layers_width, d_output if l == d_layers_depth - 1 else d_layers_width], dtype=tf.float64)
-        B = tf.get_variable("D_Bias" + str(l), shape = [d_output if l == d_layers_depth - 1 else d_layers_width], dtype=tf.float64)
-        # NOTE: Defines contents of input layer.
-        H = d_activation(tf.add(tf.matmul(tf.concat([grid, data, fuzz, G], 0) if l == 0 else HD[l - 1][2], W), B))
-        HD[l] = [W, B, H]
+    W = tf.get_variable("D_Weights" + str(l), shape = [data_dim if l == 0 else d_layers_width, d_output if l == d_layers_depth - 1 else d_layers_width], dtype=tf.float64)
+    B = tf.get_variable("D_Bias" + str(l), shape = [d_output if l == d_layers_depth - 1 else d_layers_width], dtype=tf.float64)
+
+    # NOTE: Defines contents of input layer.
+    H = d_activation(tf.add(tf.matmul(tf.concat([grid, data, fuzz, G], 0) if l == 0 else HD[l - 1][2], W), B))
+
+    HD[l] = [W, B, H]
 D_scores = HD[-1][2]
 
 # Define discriminator and generator losses.
@@ -131,7 +183,10 @@ for it in range(max_iter):
         d_update = True
     
     # For iterations, plot results.
-    if it % 1 == 0 or iter == max_iter - 1:
+    if ((it <= 10 and it % 1 == 0) or 
+        (it < 500 and it % 25 == 0) or
+        (it % 1000 == 0)):
+    #if (it % 10000 == 0):
         # Get data to plot and summarize.
         generated = sess.run(G)
         
@@ -150,6 +205,14 @@ for it in range(max_iter):
         print "iteration: {}, [d_loss, g_loss]: {}, data_mean: {}, gen_mean: {}, data_var: {}, gen_var: {}".format(si[0], si[1], si[2], si[3], si[4], si[5])
         
         # Plot results.
+        dest_graphs_dir = "./temp/{}/graphs".format(expt)
+        dest_scores_dir = "./temp/{}/scores".format(expt)
+        target_dirs = [dest_graphs_dir, dest_scores_dir]
+        for d in target_dirs:
+            if not os.path.exists(d):
+                os.makedirs(d)
+                print "Made dir: {}".format(d)
+
         fig, ax = plt.subplots()
         d_grid = np.reshape(grid_scores, [grid_gran, grid_gran])
         #im = ax.pcolormesh(x_grid, y_grid, d_grid, vmin=-1, vmax=1)
@@ -165,11 +228,23 @@ for it in range(max_iter):
         ax.scatter([-2,-2], [2,2], c='white', alpha=1, marker="+")
         ax.set_xlim(x_lims)
         ax.set_ylim(y_lims)
-        fig.savefig('temp/graphs/graph_{}.png'.format(it))
+        ax.set_title("iter {}".format(it))
+        fig.savefig('{}/graph_{}.png'.format(dest_graphs_dir, it))
         plt.close(fig)
         
         fig, ax = plt.subplots()
         ax.plot(scores);
-        fig.savefig('temp/scores/score_{}.png'.format(it));
+        fig.savefig('{}/score_{}.png'.format(dest_scores_dir, it));
         plt.close(fig)
 
+
+        #if it % 100 == 0:
+        if 0:
+            outputs = natural_sort(glob("{}/graph*.png".format(
+                dest_graphs_dir)))
+            attachments = " "
+            for o in outputs:
+              attachments += " -a {}".format(o)
+
+            os.system('echo $PWD | mutt -s "scratch epoch {}" {} {}'.format(
+              it, "momod@utexas.edu", attachments)) 
