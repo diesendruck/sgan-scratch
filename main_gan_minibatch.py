@@ -115,13 +115,13 @@ def load_2d_data(dataset, data_n):
         points = np.array([center[0] + radii * np.cos(theta),
                            center[1] + radii * np.sin(theta)]).transpose()
     elif dataset == "gaussian":
-        center = [0, 0]
+        center = [-3, 3]
         variance = 0.1
         points = np.random.multivariate_normal(
             center, np.identity(data_dim) * variance, data_n)
         points = np.asarray(points)
     elif dataset == "swissroll":
-        center = [0, 0]
+        center = [-3, 3]
         variance = 0.01
         num_rolls = 2
         max_radius = 4
@@ -171,19 +171,19 @@ def gen_Z():
     return np.random.normal(size = [g_n, z_dim])
 
 # Build generator out of several hidden layers.
-print 'g_layers_depth', g_layers_depth
 gen_pars = {'num_layers':g_layers_depth, 'width':g_layers_width, 'output_dim':g_output, 'activations':g_activations, 'activate_last_layer':True, 'scope': "Generator"}
 dis_pars = {'num_layers':d_layers_depth, 'width':d_layers_width, 'output_dim':d_output, 'activations':d_activations, 'activate_last_layer':False, 'scope': "Discriminator"}
 G = ffnn(Z, **gen_pars)
-print 'generator OK'
 D_scores = ffnn(tf.concat([grid, data_sample, G], 0), **dis_pars)
-print 'discriminator OK'
 
 # Define discriminator and generator losses.
 D_target = tf.constant([[1]] * d_batch_size + [[-1.]] * g_n)
-Dloss = tf.losses.mean_squared_error(D_scores[grid_n:], D_target, weights=[[1.]] * d_batch_size + [[1.]] * g_n)
-G_target = tf.constant([[1.]] * g_n)
-Gloss = tf.losses.mean_squared_error(D_scores[-g_n:], G_target)
+D_target_real      = tf.constant([[1]] * d_batch_size)
+D_target_generated = tf.constant([[1]] * g_n)
+Dloss_real      = tf.losses.mean_squared_error(D_scores[grid_n:grid_n+data_n], D_target_real)
+Dloss_generated = tf.losses.mean_squared_error(D_scores[-g_n:], D_target_generated)
+Dloss = tf.sub(Dloss_real, Dloss_generated)
+Gloss = Dloss_generated
 
 # Build optimization ops.
 d_vars = [var for var in tf.global_variables() if 'Discriminator' in var.name]
