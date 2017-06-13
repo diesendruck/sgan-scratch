@@ -66,6 +66,7 @@ class SGAN(object):
         self.dataset = config.dataset  
         self.expt = config.expt
         self.email = config.email 
+        self.is_train = config.is_train
 
         self.build_model()
         self.prepare_dirs_and_logging()
@@ -120,7 +121,7 @@ class SGAN(object):
                 x = layers.dense(x, self.d_layers_width,
                     activation=self.d_activations)
 
-            x = layers.dense(x, 2, activation=None)
+            x = layers.dense(x, self.d_bottleneck_dim, activation=None)
 
             for idx in range(self.d_layers_depth):
                 x = layers.dense(x, self.d_layers_width,
@@ -128,8 +129,6 @@ class SGAN(object):
 
             out = layers.dense(x, self.d_out_dim,
                 activation=None)
-
-        variables = tf.contrib.framework.get_variables(vs)
         return out    
 
 
@@ -142,9 +141,7 @@ class SGAN(object):
                 x = layers.dense(x, self.d_layers_width,
                     activation=self.d_activations)
 
-            out = layers.dense(x, 2, activation=None)
-
-        variables = tf.contrib.framework.get_variables(vs)
+            out = layers.dense(x, self.d_bottleneck_dim, activation=None)
         return out    
 
 
@@ -159,8 +156,6 @@ class SGAN(object):
 
             out = layers.dense(x, self.d_out_dim,
                 activation=None)
-
-        variables = tf.contrib.framework.get_variables(vs)
         return out    
 
 
@@ -174,9 +169,11 @@ class SGAN(object):
                 tf.random_normal([self.real_n, self.z_dim], stddev=0.1,
                     dtype=tf.float64),
                 name='z_coverage')
-        self.z = tf.placeholder(tf.float64, [self.real_n, self.z_dim])
-        self.k_d = tf.Variable(0., dtype=tf.float64, trainable=False, name='k_d')
-        self.k_g = tf.Variable(0., dtype=tf.float64, trainable=False, name='k_g')
+        self.z = tf.placeholder(tf.float64, [None, self.z_dim])
+        self.k_d = tf.Variable(0., dtype=tf.float64, trainable=False,
+                name='k_d')
+        self.k_g = tf.Variable(0., dtype=tf.float64, trainable=False,
+                name='k_g')
 
         # Compute generator and autoencoder outputs.
         self.gen = self.generator(self.z, reuse=False)
@@ -261,25 +258,25 @@ class SGAN(object):
         tf.global_variables_initializer().run()
 
 
-    def train(self, config):
+    def train(self):
         # Frequency of summary, checkpoints, and plotting.
         summary_step = 100
-        checkpoint_step = 1000
-        email_step = 10000
+        checkpoint_step = 100
         gen_step = 100
         gen_coverage_step = 100
         coverage_stop = 2001
+        email_step = 10000
 
         # Set number of d (autoencoder), g (generator), and c (coverage)
         # updates per iteration.
         # NOTE: This should not be required. Should be handled by balance term.
         d_per_iter = 5
-        g_per_iter = 10
+        g_per_iter = 5
         c_per_iter = 5
 
         # Load checkpoints, if they exist.
         self.counter = 1
-        self.load_checkpoints()  # Changes self.counter if checkpoint loaded.
+        self.load_checkpoints()  
 
         # Run training.
         for it in range(1, self.max_iter):
@@ -287,12 +284,12 @@ class SGAN(object):
             for _ in range(d_per_iter):
                 self.sess.run([self.k_d_update],
                     feed_dict={
-                        self.z: self.gen_z(),
+                        self.z: self.gen_z(self.gen_n),
                         self.real_sample: self.gen_real_sample()})
             for _ in range(g_per_iter):
                 self.sess.run([self.k_g_update],
                     feed_dict={
-                        self.z: self.gen_z(),
+                        self.z: self.gen_z(self.gen_n),
                         self.real_sample: self.gen_real_sample()})
             if it < coverage_stop:
                 for _ in range(c_per_iter):
@@ -303,7 +300,7 @@ class SGAN(object):
                 summary_results = self.sess.run(
                     self.summary_op,
                     feed_dict = {
-                        self.z: self.gen_z(),
+                        self.z: self.gen_z(self.gen_n),
                         self.real_sample: self.real_points})
                 self.summary_writer.add_summary(summary_results, self.counter)
                 self.summary_writer.flush()
@@ -313,7 +310,8 @@ class SGAN(object):
                 self.saver.save(self.sess, 
                         os.path.join(self.checkpoints_dir, 'sgan'),
                         global_step=self.counter) 
-                print(' [*] Saved checkpoint {}'.format(self.counter))
+                print(' [*] Saved checkpoint {} to {}'.format(self.counter,
+                    self.checkpoints_dir))
 
             # Email results.
             if self.email and it % email_step == 1:
@@ -324,31 +322,34 @@ class SGAN(object):
                 generated = self.sess.run(
                     self.gen,
                     feed_dict={
-                        self.z: self.gen_z(),
-                        self.real_sample: self.gen_real_sample()})
-
-                grid_scores = self.sess.run(
-                    self.ae_loss_grid_vals,
-                    feed_dict = {
-                        self.z: self.gen_z(),
-                        self.real_sample: self.gen_real_sample()})
+                        self.z: self.gen_z(self.gen_n)})
 
                 self.console_summary(generated)
-                self.plot_and_save_fig(generated, grid_scores)
+                self.plot_and_save_fig(generated)
 
             # Plot generator coverage results.
             if it % gen_coverage_step == 1 and self.counter < coverage_stop:
                 gen_z_coverage = self.sess.run(self.gen_z_coverage)
-
-                grid_scores = self.sess.run(
-                    self.ae_loss_grid_vals,
-                    feed_dict = {
-                        self.real_sample: self.real_points})
-
-                self.plot_and_save_fig(gen_z_coverage, grid_scores,
-                        tag='coverage')
+                self.plot_and_save_fig(gen_z_coverage, tag='coverage')
 
             self.counter += 1
+
+
+    def test(self):
+        could_load = self.load_checkpoints()
+        if not could_load:
+            raise ValueError(
+                ' [!] Need to train model before testing.')
+
+        z1, z2 = self.gen_z(2)
+
+        interpolated_zs = np.empty((0, self.z_dim)) 
+        for ratio in np.linspace(0, 1, 11):
+            mix = np.reshape(ratio * z1 + (1 - ratio) * z2, (1, 2)) 
+            interpolated_zs = np.append(interpolated_zs, mix, axis=0)
+
+        gens = self.sess.run(self.gen, {self.z: interpolated_zs}) 
+        self.plot_and_save_fig(gens, tag='interpolated')
 
 
     def load_checkpoints(self):
@@ -356,21 +357,27 @@ class SGAN(object):
         ckpt = tf.train.get_checkpoint_state(self.checkpoints_dir)
 
         if ckpt and ckpt.model_checkpoint_path:
+
             # Check if user wants to continue.
             user_input = raw_input(
-                '\nFound checkpoint {}. Proceed? (y/n) '.format(
+                'Found checkpoint {}. Proceed? (y/n) '.format(
                     ckpt.model_checkpoint_path))
             if user_input != 'y':
-                sys.exit('Cancelled. To start fresh, rm checkpoint files.')
+                raise ValueError(
+                    ' [!] Cancelled. To start fresh, rm checkpoint files.')
 
             ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
             self.saver.restore(self.sess, os.path.join(self.checkpoints_dir,
                 ckpt_name))
             self.counter = int(next(
                 re.finditer('(\d+)(?!.*\d)', ckpt_name)).group(0))
-            print(' [*] Success to read {}'.format(ckpt_name))
+            print(' [*] Successfully loaded {}'.format(ckpt_name))
+            could_load = True
+            return could_load
         else:
             print(' [!] Failed to find a checkpoint')
+            could_load = False 
+            return could_load
 
 
     def console_summary(self, generated):
@@ -380,7 +387,7 @@ class SGAN(object):
                  self.ae_loss_real, self.ae_loss_gen,
                  self.coverage_loss],
                 feed_dict = {
-                    self.z: self.gen_z(),
+                    self.z: self.gen_z(self.gen_n),
                     self.real_sample: self.gen_real_sample()}),
                 2)
         rm = round_list(self.real_points.mean(0), 2)
@@ -397,7 +404,9 @@ class SGAN(object):
         print(summ)
 
 
-    def plot_and_save_fig(self, generated, grid_scores, tag=None):
+    def plot_and_save_fig(self, generated, tag=None):
+        grid_scores = self.sess.run(self.ae_loss_grid_vals)
+
         fig, ax = plt.subplots()
         d_grid = np.reshape(grid_scores,
                 [self.grid_gran, self.grid_gran])
@@ -417,15 +426,12 @@ class SGAN(object):
 
         if tag:
             title = 'counter {} {}'.format(self.counter, tag)
-        else:
-            title = 'counter {}'.format(self.counter)
-        ax.set_title(title)
-
-        if tag:
             filename = '{}/graph_{}_{}.png'.format(self.graphs_dir,
                     self.counter, tag)
         else:
+            title = 'counter {}'.format(self.counter)
             filename = '{}/graph_{}.png'.format(self.graphs_dir, self.counter)
+        ax.set_title(title)
         fig.savefig(filename)
 
         plt.close(fig)
@@ -455,21 +461,21 @@ class SGAN(object):
             self.d_batch_size), :]
 
 
-    def gen_z(self):
-        return np.random.uniform(size=[self.gen_n, self.z_dim],
+    def gen_z(self, gen_n):
+        return np.random.uniform(size=[gen_n, self.z_dim],
                 low=-1.0, high=1.0)
-        #return np.random.normal(size=[self.gen_n, self.z_dim])
+        #return np.random.normal(size=[gen_n, self.z_dim])
 
 
 def main(config):
-    print
-    pp = pprint.PrettyPrinter()
-    pp.pprint(config)
-    print
-
+    print '\n', config, '\n'
     with tf.Session() as sess:
         sgan = SGAN(sess, config)
-        sgan.train(config)
+        if config.is_train:
+            sgan.train()
+        else:
+            sgan.test()
+
 
 if __name__ == '__main__':
     config, unparsed = get_config()
