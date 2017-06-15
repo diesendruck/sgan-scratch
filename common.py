@@ -2,12 +2,15 @@ import tensorflow as tf
 import numpy as np
 from ffnn import ffnn
 from ff_pin import ff_pin
+import pdb
+
 
 def natural_sort(l):
     """Helper function to sort globbed files naturally."""
     convert = lambda text: int(text) if text.isdigit() else text.lower()
     alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
     return sorted(l, key=alphanum_key)
+
 
 def load_2d_data(dataset, data_n, data_dim):
     """Generates nparray of 2d data.
@@ -19,51 +22,62 @@ def load_2d_data(dataset, data_n, data_dim):
     Returns:
         points: Numpy array of points, of size (data_n, 2).
     """
+    group1_n = data_n / 4
+    group2_n = data_n - group1_n
+
     if dataset == "concentric":
         center = [-3, 3]
         radius_1 = 0.5
         radius_2 = 1.5
         variance = 0.1
         theta = np.concatenate(
-            (np.random.uniform(0, 2 * np.pi, data_n / 2),
-             np.random.uniform(0, 2 * np.pi, data_n / 2)), axis=0)
+            (np.random.uniform(0, 2 * np.pi, group1_n),
+             np.random.uniform(0, 2 * np.pi, group2_n)), axis=0)
         radii = np.concatenate(
-            (np.random.normal(radius_1, variance, data_n / 2),
-             np.random.normal(radius_2, variance, data_n / 2)), axis=0)
+            (np.random.normal(radius_1, variance, group1_n),
+             np.random.normal(radius_2, variance, group2_n)), axis=0)
         points = np.array([center[0] + radii * np.cos(theta),
                            center[1] + radii * np.sin(theta)]).transpose()
+
     elif dataset == "gaussian":
         center = [-3, 3]
         variance = 0.1
         points = np.random.multivariate_normal(center, np.identity(data_dim) * variance, data_n)
         points = np.asarray(points)
+
     elif dataset == "swissroll":
-        center = [-3, 3]
-        variance = 0.01
+        center = [-2, 2]
+        variance = 0.15
         num_rolls = 2
-        max_radius = 4
+        max_radius = 3
         theta = np.linspace(0, 2 * np.pi * num_rolls, data_n)
         radii = (np.linspace(0, max_radius, data_n) +
-                 np.random.normal(0, variance))
+                 np.random.normal(0, variance, data_n))
         points = np.array([center[0] + radii * np.cos(theta),
                            center[1] + radii * np.sin(theta)]).transpose()
+
     elif dataset == "smile":
         piece = np.random.choice(4, data_n)
         var_scale = .1
         points = np.zeros([data_n,2])
         for n in range(data_n):
             if   piece[n] == 0:
-                points[n,:] = np.random.multivariate_normal([-2,2], np.array([[1.,0],[0,1.]])*var_scale, [1])
+                points[n,:] = np.random.multivariate_normal([-4, 3], np.array([[1., 0], [0, 1.]]) * var_scale, [1])
             elif piece[n] == 1:
-                points[n,:] = np.random.multivariate_normal([ 2,2], np.array([[2.,0],[0,.5]])*var_scale, [1])
+                points[n,:] = np.random.multivariate_normal([0, 3], np.array([[2., 0], [0, .5]]) * var_scale, [1])
             elif piece[n] == 2:
-                points[n,:] = np.random.multivariate_normal([ 0,0], np.array([[.5,0],[0,2.]])*var_scale, [1])
+                points[n,:] = np.random.multivariate_normal([-2, 1], np.array([[.5, 0], [0, 2.]]) * var_scale, [1])
             elif piece[n] == 3:
-                x = np.random.uniform(-3., 3., 1)[0]
-                y = .25 * x**2 - 2
+                x = np.random.uniform(-4., 0., 1)[0]
+                y = .25 * (x+2)**2 - 1
                 points[n,:] = np.random.multivariate_normal([x,y], np.array([[.25,0],[0,.25]])*var_scale, [1])
         # plt.scatter(points[:,0], points[:,1]); plt.savefig('temp.png'); plt.close()
+
+    else:
+        raise ValueError('Dataset must be in ["gaussian", "concentric", "swissroll", "smile"')
+
     return points
+
 
 # Helper function for summary output.
 def round_list(l):
