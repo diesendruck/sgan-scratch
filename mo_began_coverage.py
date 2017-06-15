@@ -13,8 +13,10 @@ import tensorflow as tf
 layers = tf.layers
 from config import get_config
 from glob import glob
+from models import *
+from munkres import Munkres
+from scipy.spatial.distance import cdist
 from utils import *
-import common
 
 
 class SGAN(object):
@@ -45,20 +47,21 @@ class SGAN(object):
         self.lambda_k_g = config.lambda_k_g 
         self.max_iter = config.max_iter
         self.optimizer = config.optimizer
+        self.training_z = config.training_z
 
         # Output vars.
         self.summary_step = config.summary_step
         self.checkpoint_step = config.checkpoint_step
         self.gen_step = config.gen_step
         self.gen_coverage_step = config.gen_coverage_step
-        self.coverage_stop = config.coverage_stop
         self.email = config.email 
         self.email_step = config.email_step
         self.x_lims = [-7., 3.]
         self.y_lims = [-3., 7.]
         self.grid_gran = 21 
         self.grid_n = self.grid_gran ** 2
-        self.grid, self.x_grid, self.y_grid = self.make_grid()
+        self.grid, self.x_grid, self.y_grid = make_grid(
+                self.x_lims, self.y_lims, self.grid_gran)
 
         # Network vars.
         self.d_out_dim = config.d_out_dim
@@ -108,93 +111,43 @@ class SGAN(object):
                                 ready_for_local_init_op=None)
 
 
-    def generator(self, z, reuse=False):
-        with tf.variable_scope('generator', reuse=reuse) as vs:
-            x = layers.dense(z, self.g_layers_width,
-                    activation=self.g_activations)
-            
-            for idx in range(self.g_layers_depth - 1):
-                x = layers.dense(x, self.g_layers_width,
-                    activation=self.g_activations)
-
-            out = layers.dense(x, self.g_out_dim,
-                activation=None)
-
-        variables = tf.contrib.framework.get_variables(vs)
-        return out 
-
-
-    def autoencoder(self, x, reuse=False):
-        with tf.variable_scope('autoencoder', reuse=reuse) as vs:
-            x = layers.dense(x, self.d_layers_width,
-                activation=self.d_activations)
-            
-            for idx in range(self.d_layers_depth - 1):
-                x = layers.dense(x, self.d_layers_width,
-                    activation=self.d_activations)
-
-            x = layers.dense(x, self.d_encoded_dim, activation=None)
-
-            for idx in range(self.d_layers_depth):
-                x = layers.dense(x, self.d_layers_width,
-                    activation=self.d_activations)
-
-            out = layers.dense(x, self.d_out_dim,
-                activation=None)
-        return out    
-
-
-    def encoder(self, x, reuse=False):
-        with tf.variable_scope('autoencoder_enc', reuse=reuse) as vs:
-            x = layers.dense(x, self.d_layers_width,
-                activation=self.d_activations)
-            
-            for idx in range(self.d_layers_depth - 1):
-                x = layers.dense(x, self.d_layers_width,
-                    activation=self.d_activations)
-
-            out = layers.dense(x, self.d_encoded_dim, activation=None)
-        return out    
-
-
-    def decoder(self, z, reuse=False):
-        with tf.variable_scope('autoencoder_dec', reuse=reuse) as vs:
-            x = layers.dense(z, self.d_layers_width,
-                activation=self.d_activations)
-
-            for idx in range(self.d_layers_depth - 1):
-                x = layers.dense(x, self.d_layers_width,
-                    activation=self.d_activations)
-
-            out = layers.dense(x, self.d_out_dim,
-                activation=None)
-        return out    
-
-
     def build_model(self):
-        self.real_points = common.load_2d_data(self.dataset, self.real_n, 
+        self.real_points = load_2d_data(self.dataset, self.real_n, 
                 self.real_dim)
-        self.real_sample = tf.placeholder(
-                tf.float64, [None, self.real_dim],
+        self.real_sample = tf.placeholder(tf.float64, [None, self.real_dim],
                 name='real_sample')
-        self.z_coverage = tf.Variable(
-                tf.random_normal([self.real_n, self.z_dim], stddev=0.1,
-                    dtype=tf.float64),
-                name='z_coverage')
-        self.z = tf.placeholder(tf.float64, [None, self.z_dim])
+        self.z = tf.placeholder(tf.float64, [None, self.z_dim], name='z')
+        self.z_coverage = tf.Variable(tf.random_normal(
+            [self.real_n, self.z_dim], stddev=0.1, dtype=tf.float64),
+            name='z_coverage')
         self.k_d = tf.Variable(0., dtype=tf.float64, trainable=False,
                 name='k_d')
         self.k_g = tf.Variable(0., dtype=tf.float64, trainable=False,
                 name='k_g')
 
         # Compute generator and autoencoder outputs.
-        self.gen = self.generator(self.z, reuse=False)
-        self.ae_real = self.decoder(self.encoder(self.real_sample, reuse=False),
-                reuse=False)
-        self.ae_gen = self.decoder(self.encoder(self.gen, reuse=True),
-                reuse=True)
-        self.ae_grid = self.decoder(self.encoder(tf.convert_to_tensor(
-                self.grid), reuse=True), reuse=True)
+        self.gen = generator(
+                self.z, self.g_layers_width, self.g_layers_depth,
+                self.g_activations, self.g_out_dim, reuse=False)
+        self.ae_real = decoder(
+                encoder(
+                    self.real_sample, self.d_layers_width, self.d_layers_depth,
+                    self.d_activations, self.d_encoded_dim, reuse=False),
+                self.d_layers_width, self.d_layers_depth, self.d_activations,
+                self.d_out_dim, reuse=False)
+        self.ae_gen = decoder(
+                encoder(
+                    self.gen, self.d_layers_width, self.d_layers_depth,
+                    self.d_activations, self.d_encoded_dim, reuse=True),
+                self.d_layers_width, self.d_layers_depth, self.d_activations,
+                self.d_out_dim, reuse=True)
+        self.ae_grid = decoder(
+                encoder(
+                    tf.convert_to_tensor(self.grid), self.d_layers_width,
+                    self.d_layers_depth, self.d_activations, self.d_encoded_dim,
+                    reuse=True),
+                self.d_layers_width, self.d_layers_depth, self.d_activations, 
+                self.d_out_dim, reuse=True)
 
         # Define autoencoder losses.
         self.ae_loss_real = tf.reduce_mean(tf.abs(self.ae_real - self.real_sample))
@@ -208,15 +161,17 @@ class SGAN(object):
                 tf.abs(self.ae_grid - self.grid), 1)
 
         # Define coverage losses.
-        self.gen_z_coverage = self.generator(self.z_coverage, reuse=True)
+        self.gen_z_coverage = generator(
+                self.z_coverage, self.g_layers_width, self.g_layers_depth,
+                self.g_activations, self.g_out_dim, reuse=True)
         self.coverage_loss = tf.reduce_mean(
                 tf.abs(self.real_points - self.gen_z_coverage),
                 name='coverage_mean')
+        #self.coverage_loss = self.munkres_dist(self.z_coverage,
+        #        self.get_random_z(self.real_n))
 
         # Collect and define main losses.
         self.d_loss = self.ae_loss_real - self.k_d * self.ae_loss_gen
-        #self.g_loss = self.ae_loss_gen 
-        # TODO: Decide whether coverage loss belongs in g_loss.
         self.g_loss = self.ae_loss_gen + self.k_g * self.coverage_loss
 
         # Build optimization ops.
@@ -280,59 +235,68 @@ class SGAN(object):
         self.counter = 1
         self.load_checkpoints()  
 
+        # Choose training mode.
+        if self.training_z == 'mix':
+            training_z = self.mix_gen_z_and_z_coverage()
+        elif self.training_z == 'coverage':
+            training_z = self.z_coverage.eval()
+        else:
+            training_z = self.get_random_z(self.real_n)
+
         # Run training.
-        for it in range(1, self.max_iter):
-            self.it = it
+        for _ in range(1, self.max_iter):
             for _ in range(self.d_per_iter):
                 self.sess.run([self.k_d_update],
                     feed_dict={
-                        self.z: self.gen_z(self.gen_n),
-                        self.real_sample: self.gen_real_sample()})
+                        self.z: training_z, 
+                        self.real_sample: self.get_real_sample()})
             for _ in range(self.g_per_iter):
                 self.sess.run([self.k_g_update],
                     feed_dict={
-                        self.z: self.gen_z(self.gen_n),
-                        self.real_sample: self.gen_real_sample()})
-            if it < self.coverage_stop:
-                for _ in range(self.c_per_iter):
-                    self.sess.run(self.coverage_optim)
+                        self.z: training_z, 
+                        self.real_sample: self.get_real_sample()})
+            for _ in range(self.c_per_iter):
+                self.sess.run(self.coverage_optim)
 
             # Save summary (viewable in TensorBoard).
-            if it % self.summary_step == 1:
+            if self.counter % self.summary_step == 1:
                 summary_results = self.sess.run(
                     self.summary_op,
                     feed_dict = {
-                        self.z: self.gen_z(self.gen_n),
+                        self.z: self.get_random_z(self.gen_n),
                         self.real_sample: self.real_points})
                 self.summary_writer.add_summary(summary_results, self.counter)
                 self.summary_writer.flush()
 
             # Save checkpoint.
-            if it % self.checkpoint_step == 1:
+            if self.counter % self.checkpoint_step == 1:
                 self.saver.save(self.sess, 
                         os.path.join(self.checkpoints_dir, 'sgan'),
                         global_step=self.counter) 
                 print(' [*] Saved checkpoint {} to {}'.format(self.counter,
                     self.checkpoints_dir))
 
-            # Email results.
-            if self.email and it % self.email_step == 1:
-                self.email_results()
-
             # Plot generator results.
-            if it % self.gen_step == 1:
+            if self.counter % self.gen_step == 1:
                 generated = self.sess.run(
                     self.gen,
                     feed_dict={
-                        self.z: self.gen_z(self.gen_n)})
-
+                        self.z: self.get_random_z(self.gen_n)})
                 self.console_summary(generated)
                 self.plot_and_save_fig(generated)
 
             # Plot generator coverage results.
-            if it % self.gen_coverage_step == 1:
+            if self.counter % self.gen_coverage_step == 1:
                 gen_z_coverage = self.sess.run(self.gen_z_coverage)
                 self.plot_and_save_fig(gen_z_coverage, tag='coverage')
+
+            # Plot z_coverage.
+            if self.counter % self.gen_coverage_step == 1:
+                plot_z_coverage(self.z_coverage, self.graphs_dir, self.counter)
+
+            # Email results.
+            if self.email and self.counter % self.email_step == 1:
+                email_results(self.graphs_dir, self.expt, self.counter)
 
             self.counter += 1
 
@@ -343,12 +307,12 @@ class SGAN(object):
             raise ValueError(
                 ' [!] Need to train model before testing.')
 
-        z1, z2 = self.gen_z(2)
+        z1, z2 = self.get_random_z(2)
 
         interpolated_zs = np.empty((0, self.z_dim)) 
         for ratio in np.linspace(0, 1, 11):
-            mix = np.reshape(ratio * z1 + (1 - ratio) * z2, (1, 2)) 
-            interpolated_zs = np.append(interpolated_zs, mix, axis=0)
+            interp = np.reshape(ratio * z1 + (1 - ratio) * z2, (1, 2)) 
+            interpolated_zs = np.append(interpolated_zs, interp, axis=0)
 
         gens = self.sess.run(self.gen, {self.z: interpolated_zs}) 
         self.plot_and_save_fig(gens, tag='interpolated', alpha=0.5)
@@ -392,20 +356,20 @@ class SGAN(object):
                  self.ae_loss_real, self.ae_loss_gen,
                  self.coverage_loss],
                 feed_dict = {
-                    self.z: self.gen_z(self.gen_n),
-                    self.real_sample: self.gen_real_sample()}),
-                2)
-        rm = round_list(self.real_points.mean(0), 2)
-        gm = round_list(generated.mean(0), 2)
-        cm = round_list(self.z_coverage.eval().mean(0), 2)
-        rv = round_list(self.real_points.var(0), 2)
-        gv = round_list(generated.var(0), 2)
-        cv = round_list(self.z_coverage.eval().var(0), 2)
-        summ = ('it: {}, losses(d,g,c): ({}, {}, {}) '
+                    self.z: self.get_random_z(self.gen_n),
+                    self.real_sample: self.get_real_sample()}))
+        rm = round_list(self.real_points.mean(0))
+        gm = round_list(generated.mean(0))
+        cm = round_list(self.z_coverage.eval().mean(0))
+        rv = round_list(self.real_points.var(0))
+        gv = round_list(generated.var(0))
+        cv = round_list(self.z_coverage.eval().var(0))
+        summ = ('counter: {}, losses(d,g,c): ({}, {}, {}) '
                 'means(r,g,c): ({}, {}, {}),  vars(r,g,c): ({}, {}, {}) '
                 'k(d,g): ({}, {}) '
                 'ae_loss(r,g): ({}, {})').format(
-            self.it, dl, gl, cl, rm, gm, cm, rv, gv, cv, kd, kg, ae_r, ae_g)
+            self.counter, dl, gl, cl, rm, gm, cm, rv, gv, cv, kd, kg, ae_r,
+            ae_g)
         print(summ)
 
 
@@ -448,34 +412,56 @@ class SGAN(object):
         plt.close(fig)
 
 
-    def email_results(self):
-        outputs = natural_sort(glob('{}/graph_*.png'.format(
-            self.graphs_dir)))
-        attachments = ' '
-        for o in outputs:
-            attachments += ' -a {}'.format(o)
-
-        os.system(('echo $PWD | mutt -s "sgan-began-coverage {}, '
-                   'epoch {}" {} {}').format(
-            self.expt, it, 'momod@utexas.edu', attachments))
-
-
-    def make_grid(self):
-        x_grid = np.linspace(self.x_lims[0], self.x_lims[1], self.grid_gran)
-        y_grid = np.linspace(self.y_lims[0], self.y_lims[1], self.grid_gran)
-        grid = np.asarray([[i, j] for i in x_grid for j in y_grid])
-        return grid, x_grid, y_grid
-        
-
-    def gen_real_sample(self):
+    def get_real_sample(self):
         return self.real_points[np.random.choice(self.real_n,
             self.d_batch_size), :]
 
 
-    def gen_z(self, gen_n):
+    def get_random_z(self, gen_n):
         return np.random.uniform(size=[gen_n, self.z_dim],
                 low=-1.0, high=1.0)
         #return np.random.normal(size=[gen_n, self.z_dim])
+
+
+    def mix_gen_z_and_z_coverage(self):
+        # With diminishing prob, mix, otherwise just generate using
+        # get_random_z().
+        OPTION = 1
+
+        if OPTION == 1:
+            is_mix = np.random.binomial(1,
+                p=np.min([1, 1 - float(self.counter)/self.max_iter]))
+            #if is_mix:
+            if 1:
+                ratio = np.random.uniform()
+                gen_z_coverage = self.sess.run(self.gen_z_coverage)
+                z_random = self.get_random_z(self.real_n)
+                z = ratio * z_random + (1 - ratio) * gen_z_coverage 
+            else:
+                z = self.get_random_z(self.real_n) 
+            return z
+
+        elif OPTION == 2:
+            gen_z_coverage = self.sess.run(self.gen_z_coverage)
+            z_random = self.gen_z(self.real_n)
+            ratio = float(self.counter)/self.max_iter
+            z = (1 - ratio) * gen_z_coverage + ratio * z_random
+            return z
+
+
+    #def distribution_dist(self, array1, array2):
+
+
+    def munkres_dist(self, array1, array2):
+        # See https://github.com/bmc/munkres/blob/master/munkres.py.
+        distances = cdist(array1, array2).tolist()
+        m = Munkres()
+        indices = m.compute(distances)
+        cost = 0
+        for row, col in indices:
+            lowest_cost = distance[row][col]
+            cost += lowest_cost
+        return cost
 
 
 def main(config):
