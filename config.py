@@ -20,9 +20,9 @@ def add_argument_group(name):
 train_arg = add_argument_group('Training')
 train_arg.add_argument('--expt', type=str, default='test')
 train_arg.add_argument('--is_train', type=str2bool, default=True)
-train_arg.add_argument('--d_per_iter', type=int, default=5)
-train_arg.add_argument('--g_per_iter', type=int, default=5)
-train_arg.add_argument('--c_per_iter', type=int, default=5)
+train_arg.add_argument('--d_per_iter', type=int, default=1)
+train_arg.add_argument('--g_per_iter', type=int, default=1)
+train_arg.add_argument('--c_per_iter', type=int, default=1)
 train_arg.add_argument('--d_lr', type=float, default=0.001)
 train_arg.add_argument('--g_lr', type=float, default=0.001)
 train_arg.add_argument('--c_lr', type=float, default=0.001)
@@ -38,12 +38,12 @@ train_arg.add_argument('--training_z', type=str, default='random', choices=['cov
 
 # Output
 output_arg = add_argument_group('Output')
-output_arg.add_argument('--summary_step', type=int, default=100)
-output_arg.add_argument('--checkpoint_step', type=int, default=100)
-output_arg.add_argument('--gen_step', type=int, default=100)
-output_arg.add_argument('--gen_coverage_step', type=int, default=100)
+output_arg.add_argument('--log_step', type=int, default=10)
+output_arg.add_argument('--checkpoint_step', type=int, default=10)
+output_arg.add_argument('--gen_step', type=int, default=10)
+output_arg.add_argument('--gen_coverage_step', type=int, default=10)
 output_arg.add_argument('--email', type=str2bool, default=False)
-output_arg.add_argument('--email_step', type=int, default=10000)
+output_arg.add_argument('--email_step', type=int, default=1000)
 
 # Network
 net_arg = add_argument_group('Network')
