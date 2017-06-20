@@ -34,16 +34,17 @@ train_arg.add_argument('--lambda_k_d', type=float, default=0.001)
 train_arg.add_argument('--lambda_k_g', type=float, default=0.001)
 train_arg.add_argument('--max_iter', type=int, default=500000)
 train_arg.add_argument('--optimizer', type=str, default='adam')
-train_arg.add_argument('--training_z', type=str, default='random', choices=['coverage', 'mix', 'random'])
+train_arg.add_argument('--training_z', type=str, default='coverage', choices=['coverage', 'mix', 'random'])
+train_arg.add_argument('--normality_dist_fn', type=str, default='stein', choices=['stein', 'munkres'])
 
 # Output
 output_arg = add_argument_group('Output')
-output_arg.add_argument('--log_step', type=int, default=10)
-output_arg.add_argument('--checkpoint_step', type=int, default=10)
-output_arg.add_argument('--gen_step', type=int, default=10)
-output_arg.add_argument('--gen_coverage_step', type=int, default=10)
+output_arg.add_argument('--log_step', type=int, default=100)
+output_arg.add_argument('--checkpoint_step', type=int, default=100)
+output_arg.add_argument('--gen_step', type=int, default=100)
+output_arg.add_argument('--gen_coverage_step', type=int, default=100)
 output_arg.add_argument('--email', type=str2bool, default=False)
-output_arg.add_argument('--email_step', type=int, default=1000)
+output_arg.add_argument('--email_step', type=int, default=10000)
 
 # Network
 net_arg = add_argument_group('Network')

@@ -481,10 +481,14 @@ class SGAN(object):
             h = 1.
             n = test_sample.shape[0]
             d = test_sample.shape[1]
+            num_combos = 5000
 
-            combos = [(val_i, val_j) 
+            all_combos = [(val_i, val_j) 
                     for i, val_i in enumerate(test_sample) 
                     for j, val_j in enumerate(test_sample) if i != j]
+            subset_indices = np.random.permutation(range(len(all_combos)))
+            combos = [all_combos[i] for i in 
+                    np.random.choice(subset_indices, num_combos)]
 
             def u_fn(x1, x2, test_sample):
                 kernel = np.exp(-1. / h * sum((x1 - x2)**2))
