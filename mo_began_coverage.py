@@ -48,9 +48,10 @@ class SGAN(object):
         self.max_iter = config.max_iter
         self.optimizer = config.optimizer
         self.training_z = config.training_z
+        self.normality_dist_fn = config.normality_dist_fn
 
         # Output vars.
-        self.summary_step = config.summary_step
+        self.log_step = config.log_step
         self.checkpoint_step = config.checkpoint_step
         self.gen_step = config.gen_step
         self.gen_coverage_step = config.gen_coverage_step
@@ -118,12 +119,16 @@ class SGAN(object):
                 name='real_sample')
         self.z = tf.placeholder(tf.float64, [None, self.z_dim], name='z')
         self.z_coverage = tf.Variable(tf.random_normal(
-            [self.real_n, self.z_dim], stddev=0.1, dtype=tf.float64),
-            name='z_coverage')
+                [self.real_n, self.z_dim], stddev=0.1, dtype=tf.float64),
+                name='z_coverage')
         self.k_d = tf.Variable(0., dtype=tf.float64, trainable=False,
                 name='k_d')
         self.k_g = tf.Variable(0., dtype=tf.float64, trainable=False,
                 name='k_g')
+        self.normality_loss = tf.Variable(0., dtype=tf.float64, trainable=False, 
+                name='normality_loss')
+        self.new_normality_loss = tf.Variable(0., dtype=tf.float64, trainable=False, 
+                name='new_normality_loss')
 
         # Compute generator and autoencoder outputs.
         self.gen = generator(
@@ -165,10 +170,8 @@ class SGAN(object):
                 self.z_coverage, self.g_layers_width, self.g_layers_depth,
                 self.g_activations, self.g_out_dim, reuse=True)
         self.coverage_loss = tf.reduce_mean(
-                tf.abs(self.real_points - self.gen_z_coverage),
-                name='coverage_mean')
-        #self.coverage_loss = self.munkres_dist(self.z_coverage,
-        #        self.get_random_z(self.real_n))
+                tf.abs(self.real_points - self.gen_z_coverage)
+                ) + 0.001 * self.normality_loss
 
         # Collect and define main losses.
         self.d_loss = self.ae_loss_real - self.k_d * self.ae_loss_gen
@@ -188,12 +191,12 @@ class SGAN(object):
             optimizer = tf.train.AdamOptimizer
 
         # Define optimization nodes.
-        d_optim = optimizer(self.d_lr).minimize(self.d_loss,
-                var_list=self.d_vars)
-        g_optim = optimizer(self.g_lr).minimize(self.g_loss,
-                var_list=self.g_vars)
-        self.coverage_optim = optimizer(self.c_lr).minimize(self.coverage_loss,
-                var_list=self.coverage_vars)
+        d_optim = optimizer(self.d_lr).minimize(
+                self.d_loss, var_list=self.d_vars)
+        g_optim = optimizer(self.g_lr).minimize(
+                self.g_loss, var_list=self.g_vars)
+        self.z_optim = optimizer(self.c_lr).minimize(
+                self.coverage_loss, var_list=self.coverage_vars)
 
         self.emp_gamma_d = self.ae_loss_gen / self.ae_loss_real
         self.emp_gamma_g = self.ae_loss_gen / self.coverage_loss
@@ -211,6 +214,10 @@ class SGAN(object):
                 tf.clip_by_value(
                     self.k_g + self.lambda_k_g * self.balance_g, 0, 1))
 
+        self.normality_loss_update = tf.assign(
+            self.normality_loss, self.new_normality_loss)
+
+
         # Set up summary items.
         self.summary_op = tf.summary.merge([
             tf.summary.scalar('loss/d_loss', self.d_loss),
@@ -218,6 +225,7 @@ class SGAN(object):
             tf.summary.scalar('loss/ae_loss_gen', self.ae_loss_gen),
             tf.summary.scalar('loss/g_loss', self.g_loss),
             tf.summary.scalar('loss/coverage_loss', self.coverage_loss),
+            tf.summary.scalar('loss/normality_loss', self.normality_loss),
             tf.summary.scalar('balance/emp_gamma_d', self.emp_gamma_d),
             tf.summary.scalar('balance/emp_gamma_g', self.emp_gamma_g),
             tf.summary.scalar('balance/measure', self.measure),
@@ -235,16 +243,18 @@ class SGAN(object):
         self.counter = 1
         self.load_checkpoints()  
 
-        # Choose training mode.
-        if self.training_z == 'mix':
-            training_z = self.mix_gen_z_and_z_coverage()
-        elif self.training_z == 'coverage':
-            training_z = self.z_coverage.eval()
-        else:
-            training_z = self.get_random_z(self.real_n)
-
         # Run training.
         for _ in range(1, self.max_iter):
+            print("Starting training. Output depends on definitions in config.py.")
+            # Choose training mode.
+            if self.training_z == 'mix':
+                training_z = self.mix_gen_z_and_z_coverage()
+            elif self.training_z == 'coverage':
+                training_z = self.z_coverage.eval()
+            else:
+                training_z = self.get_random_z(self.real_n)
+
+            # Run each optimization in sequence.
             for _ in range(self.d_per_iter):
                 self.sess.run([self.k_d_update],
                     feed_dict={
@@ -256,10 +266,16 @@ class SGAN(object):
                         self.z: training_z, 
                         self.real_sample: self.get_real_sample()})
             for _ in range(self.c_per_iter):
-                self.sess.run(self.coverage_optim)
-
+                new_normality_loss = self.normality_dist(
+                    self.z_coverage.eval()) 
+                print new_normality_loss
+                self.sess.run(self.normality_loss_update, 
+                    feed_dict={
+                        self.new_normality_loss: new_normality_loss})
+                self.sess.run(self.z_optim)
+ 
             # Save summary (viewable in TensorBoard).
-            if self.counter % self.summary_step == 1:
+            if self.counter % self.log_step == 0:
                 summary_results = self.sess.run(
                     self.summary_op,
                     feed_dict = {
@@ -269,15 +285,15 @@ class SGAN(object):
                 self.summary_writer.flush()
 
             # Save checkpoint.
-            if self.counter % self.checkpoint_step == 1:
+            if self.counter % self.checkpoint_step == 0:
                 self.saver.save(self.sess, 
-                        os.path.join(self.checkpoints_dir, 'sgan'),
-                        global_step=self.counter) 
+                    os.path.join(self.checkpoints_dir, 'sgan'),
+                    global_step=self.counter) 
                 print(' [*] Saved checkpoint {} to {}'.format(self.counter,
                     self.checkpoints_dir))
 
-            # Plot generator results.
-            if self.counter % self.gen_step == 1:
+            # Plot generator results, and print console summary.
+            if self.counter % self.gen_step == 0:
                 generated = self.sess.run(
                     self.gen,
                     feed_dict={
@@ -286,16 +302,16 @@ class SGAN(object):
                 self.plot_and_save_fig(generated)
 
             # Plot generator coverage results.
-            if self.counter % self.gen_coverage_step == 1:
+            if self.counter % self.gen_coverage_step == 0:
                 gen_z_coverage = self.sess.run(self.gen_z_coverage)
                 self.plot_and_save_fig(gen_z_coverage, tag='coverage')
 
             # Plot z_coverage.
-            if self.counter % self.gen_coverage_step == 1:
+            if self.counter % self.gen_coverage_step == 0:
                 plot_z_coverage(self.z_coverage, self.graphs_dir, self.counter)
 
             # Email results.
-            if self.email and self.counter % self.email_step == 1:
+            if self.email and self.counter % self.email_step == 0:
                 email_results(self.graphs_dir, self.expt, self.counter)
 
             self.counter += 1
@@ -449,19 +465,47 @@ class SGAN(object):
             return z
 
 
-    #def distribution_dist(self, array1, array2):
+    def normality_dist(self, test_sample):
+        if self.normality_dist_fn == 'munkres':
+            # See https://github.com/bmc/munkres/blob/master/munkres.py.
+            target_sample = self.get_random_z(self.real_n)
+            distances = cdist(test_sample, target_sample).tolist()
+            m = Munkres()
+            indices = m.compute(distances)
+            cost = 0
+            for row, col in indices:
+                lowest_cost = distances[row][col]
+                cost += lowest_cost
+            return cost
 
+        elif self.normality_dist_fn == 'stein':
+            h = 1.
+            n = test_sample.shape[0]
+            d = test_sample.shape[1]
 
-    def munkres_dist(self, array1, array2):
-        # See https://github.com/bmc/munkres/blob/master/munkres.py.
-        distances = cdist(array1, array2).tolist()
-        m = Munkres()
-        indices = m.compute(distances)
-        cost = 0
-        for row, col in indices:
-            lowest_cost = distance[row][col]
-            cost += lowest_cost
-        return cost
+            combos = [(val_i, val_j) 
+                    for i, val_i in enumerate(test_sample) 
+                    for j, val_j in enumerate(test_sample) if i != j]
+
+            def u_fn(x1, x2, test_sample):
+                kernel = np.exp(-1. / h * sum((x1 - x2)**2))
+                part1 = np.inner(-x1, -x2) * kernel 
+                part2 = np.inner(-x2, kernel * (-2. / h * (x1 - x2)))
+                part3 = np.inner(-x1, kernel * (2. / h * (x1 - x2)))
+                part4 = [(
+                    kernel * (2. / h) + 
+                    (kernel * ((-2. / h) *
+                        (x1 - x2)[i]) * (2. / h * (x1 - x2)[i])))
+                    for i in range(d)]
+                part4 = sum(part4)
+                return part1 + part2 + part3 + part4
+
+            u_sum = 0
+            for c in combos:
+                x1, x2 = c
+                u_sum += u_fn(x1, x2, test_sample)
+
+            return 1. / (n * (n-1)) * u_sum
 
 
 def main(config):
