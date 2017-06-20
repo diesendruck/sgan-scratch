@@ -212,7 +212,7 @@ class SGAN(object):
             self.k_g_update = tf.assign(
                 self.k_g,
                 tf.clip_by_value(
-                    self.k_g + self.lambda_k_g * self.balance_g, 0, 1))
+                    self.k_g + self.lambda_k_g * self.balance_g, 0, 5))
 
         self.normality_loss_update = tf.assign(
             self.normality_loss, self.new_normality_loss)
@@ -242,10 +242,10 @@ class SGAN(object):
         # Load checkpoints, if they exist.
         self.counter = 1
         self.load_checkpoints()  
+        print("Starting training. Output depends on definitions in config.py.")
 
         # Run training.
         for _ in range(1, self.max_iter):
-            print("Starting training. Output depends on definitions in config.py.")
             # Choose training mode.
             if self.training_z == 'mix':
                 training_z = self.mix_gen_z_and_z_coverage()
@@ -268,7 +268,6 @@ class SGAN(object):
             for _ in range(self.c_per_iter):
                 new_normality_loss = self.normality_dist(
                     self.z_coverage.eval()) 
-                print new_normality_loss
                 self.sess.run(self.normality_loss_update, 
                     feed_dict={
                         self.new_normality_loss: new_normality_loss})
