@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import pdb
+import re
 from glob import glob
 
 
@@ -89,7 +90,7 @@ def round_list(l):
 
 def email_results(graphs_dir, expt, counter):
     outputs = natural_sort(glob(
-        graphs_dir + '/graph_*001.png'))
+        graphs_dir + '/graph_*000.png'))
     attachments = ' '
     for o in outputs:
         attachments += ' -a {}'.format(o)
@@ -105,11 +106,16 @@ def make_grid(x_lims, y_lims, grid_gran):
     return grid, x_grid, y_grid
 
 
-def plot_z_coverage(z_coverage, graphs_dir, counter):
+def plot_z_preimage(z_preimage, graphs_dir, counter, normality_loss):
+    preimage_path = os.path.join(graphs_dir, 'z_preimage')
+    if not os.path.exists(preimage_path):
+            os.makedirs(preimage_path)
     fig, ax = plt.subplots()
-    points = z_coverage.eval()
+    points = z_preimage.eval()
     ax.scatter(points[:, 0], points[:, 1],
             c='r', alpha=.5, marker='+')
-    filename = '{}/z_coverage_{}.png'.format(graphs_dir, counter)
+    ax.set_title('Counter: {}, Normality loss: {}'.format(
+        counter, round(normality_loss, 5)))
+    filename = '{}/z_preimage/z_preimage_{}.png'.format(graphs_dir, counter)
     fig.savefig(filename)
     plt.close(fig)

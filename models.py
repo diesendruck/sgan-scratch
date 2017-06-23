@@ -12,8 +12,6 @@ def generator(z, g_layers_width, g_layers_depth, g_activations, g_out_dim,
             x = layers.dense(x, g_layers_width, activation=g_activations)
 
         out = layers.dense(x, g_out_dim, activation=None)
-
-    variables = tf.contrib.framework.get_variables(vs)
     return out
 
 
