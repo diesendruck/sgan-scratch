@@ -82,7 +82,7 @@ class SGAN(object):
         self.real_n = config.real_n  
         self.real_dim = config.real_dim  
         self.gen_n = config.gen_n
-        self.d_batch_size = config.d_batch_size
+        self.batch_size = config.batch_size
 
         self.build_model()
         self.prepare_dirs_and_logging()
@@ -119,9 +119,11 @@ class SGAN(object):
                 self.dataset, self.real_n, self.real_dim)
         self.real_sample = tf.placeholder(
                 tf.float64, [None, self.real_dim], name='real_sample')
+        self.real_sample_opt_trans = tf.placeholder(
+                tf.float64, [None, self.real_dim], name='real_sample_opt_trans')
         self.z = tf.placeholder(tf.float64, [None, self.z_dim], name='z')
-        self.z_fullsize = tf.placeholder(tf.float64, [self.real_n, self.z_dim],
-                name='z_fullsize')
+        self.z_opt_trans = tf.placeholder(tf.float64, [None, self.z_dim],
+                name='z_opt_trans')
         self.z_preimage = tf.Variable(tf.random_normal(
                 [self.real_n, self.z_dim], stddev=0.1, dtype=tf.float64),
                 name='z_preimage')
@@ -134,8 +136,8 @@ class SGAN(object):
         self.gen_z = generator(
                 self.z, self.g_layers_width, self.g_layers_depth,
                 self.g_activations, self.g_out_dim, reuse=False)
-        self.gen_z_fullsize = generator(self.z_fullsize,
-                self.g_layers_width, self.g_layers_depth,
+        self.gen_z_opt_trans = generator(
+                self.z_opt_trans, self.g_layers_width, self.g_layers_depth,
                 self.g_activations, self.g_out_dim, reuse=True)
         self.gen_z_preimage = generator(self.z_preimage,
                 self.g_layers_width, self.g_layers_depth,
@@ -173,19 +175,34 @@ class SGAN(object):
                 tf.abs(self.ae_grid - self.grid), 1)
 
         # Define losses.
+        self.d_loss = self.ae_loss_real - self.k_d * self.ae_loss_gen
         self.normality_loss = tf.py_func(self.normality_dist, [self.z_preimage],
                 tf.float64)
         self.gen_z_preimage_loss = tf.reduce_mean(
                 tf.abs(self.real_points - self.gen_z_preimage)
                 ) + self.lambda_normality_loss * self.normality_loss
-        self.coverage_loss = tf.py_func(self.munkres_dist,
-                [self.gen_z_fullsize, self.real_points], tf.float64)
-        self.d_loss = self.ae_loss_real - self.k_d * self.ae_loss_gen
+        # Define coverage loss formulas: munkres, moments.
+        self.coverage_loss = tf.reduce_mean(tf.abs( 
+                self.gen_z_opt_trans - self.real_sample_opt_trans))
+        self.gen_z_m1 = tf.reduce_mean(tf.pow(self.gen_z, 1), axis=0)
+        self.gen_z_m2 = tf.reduce_mean(tf.pow(self.gen_z, 2), axis=0)
+        self.gen_z_var = self.gen_z_m2 - tf.square(self.gen_z_m1) 
+        self.real_m1 = tf.reduce_mean(tf.pow(self.real_sample, 1), axis=0)
+        self.real_m2 = tf.reduce_mean(tf.pow(self.real_sample, 2), axis=0)
+        self.real_var = self.real_m2 - tf.square(self.real_m1) 
+        self.cvg_loss_m1 = tf.norm(self.gen_z_m1 - self.real_m1)
+        self.cvg_loss_m2 = tf.norm(self.gen_z_m2 - self.real_m2)
+        self.cvg_loss_var = tf.norm(self.gen_z_var - self.real_var)
+        self.coverage_loss_moments = (
+                self.cvg_loss_m1 + self.cvg_loss_m2 + self.cvg_loss_var)
+
         if self.training_z in ['preimage', 'mix']:
-            self.g_loss = (self.ae_loss_gen + self.coverage_loss +
-                    self.k_g * self.gen_z_preimage_loss)
+            self.g_loss = self.ae_loss_gen + self.k_g * (self.coverage_loss_moments +
+                    self.gen_z_preimage_loss)
         else:
+            #self.g_loss = self.coverage_loss
             self.g_loss = self.ae_loss_gen + self.k_g * self.coverage_loss
+            #self.g_loss = self.ae_loss_gen + self.coverage_loss_moments
 
         # Build optimization ops.
         self.g_vars = [
@@ -214,11 +231,13 @@ class SGAN(object):
         self.balance_g = self.gamma_g * self.coverage_loss - self.ae_loss_gen
         self.measure = self.ae_loss_real + tf.abs(self.balance_d)
 
-        with tf.control_dependencies([self.d_optim, self.g_optim]):
+        #with tf.control_dependencies([self.d_optim, self.g_optim]):
+        with tf.control_dependencies([self.d_optim]):
             self.k_d_update = tf.assign(
                 self.k_d, 
                 tf.clip_by_value(
                     self.k_d + self.lambda_k_d * self.balance_d, 0, 1))
+        with tf.control_dependencies([self.g_optim]):
             self.k_g_update = tf.assign(
                 self.k_g,
                 tf.clip_by_value(
@@ -266,33 +285,45 @@ class SGAN(object):
                 self.sess.run([self.k_d_update],
                     feed_dict={
                         self.z: training_z, 
-                        self.z_fullsize: self.get_random_z(self.real_n),
-                        self.real_sample: self.get_real_sample()})
+                        self.real_sample: self.get_real_sample(self.batch_size)})
 
             for _ in range(self.g_per_iter):
+                # Compute munkres permutation before sending to TF graph.
+                z_opt_trans = self.get_random_z(self.batch_size)
+                gen_z_opt_trans = self.sess.run(
+                    self.gen_z_opt_trans,
+                    feed_dict={
+                        self.z_opt_trans: z_opt_trans})
+                real_sample = self.get_real_sample(self.batch_size)
+                distances = cdist(gen_z_opt_trans, real_sample).tolist()
+                indices = Munkres().compute(distances)
+                real_sample_opt_trans = np.array(
+                        [real_sample[j] for (i, j) in indices])
+                # Perform G update.
                 self.sess.run([self.k_g_update],
                     feed_dict={
                         self.z: training_z, 
-                        self.z_fullsize: self.get_random_z(self.real_n),
-                        self.real_sample: self.get_real_sample()})
+                        self.z_opt_trans: z_opt_trans,
+                        self.real_sample_opt_trans: real_sample_opt_trans})
 
             if self.training_z in ['preimage', 'mix']:
                 for _ in range(self.c_per_iter):
                     self.sess.run(self.z_optim)
 
-            self.output()
+            self.output(z_opt_trans, real_sample_opt_trans)
             self.counter += 1
 
 
-    def output(self):
+    def output(self, z_opt_trans, real_sample_opt_trans):
         # Save summary (viewable in TensorBoard).
         if self.counter % self.tensorboard_step == 0:
             summary_results = self.sess.run(
                 self.summary_op,
                 feed_dict = {
                     self.z: self.get_random_z(self.gen_n),
-                    self.z_fullsize: self.get_random_z(self.real_n),
-                    self.real_sample: self.real_points})
+                    self.z_opt_trans: z_opt_trans,
+                    self.real_sample: self.real_points,
+                    self.real_sample_opt_trans: real_sample_opt_trans})
             self.summary_writer.add_summary(summary_results, self.counter)
             self.summary_writer.flush()
 
@@ -310,7 +341,7 @@ class SGAN(object):
                 self.gen_z,
                 feed_dict={
                     self.z: self.get_random_z(self.gen_n)})
-            self.console_summary(generated)
+            self.console_summary(generated, z_opt_trans, real_sample_opt_trans)
             self.plot_and_save_fig(generated)
 
         # Plot z_preimage and generator of z_preimage.
@@ -374,7 +405,7 @@ class SGAN(object):
             return could_load
 
 
-    def console_summary(self, generated):
+    def console_summary(self, generated, z_opt_trans, real_sample_opt_trans):
         dl, gl, kd, kg, ae_r, ae_g, cl, nl, pil = round_list(
             self.sess.run(
                 [self.d_loss, self.g_loss, self.k_d, self.k_g,
@@ -383,8 +414,9 @@ class SGAN(object):
                  self.gen_z_preimage_loss],
                 feed_dict = {
                     self.z: self.get_random_z(self.gen_n),
-                    self.z_fullsize: self.get_random_z(self.real_n),
-                    self.real_sample: self.get_real_sample()}))
+                    self.z_opt_trans: z_opt_trans,
+                    self.real_sample: self.get_real_sample(self.batch_size),
+                    self.real_sample_opt_trans: real_sample_opt_trans}))
         rm = round_list(self.real_points.mean(0))
         gm = round_list(generated.mean(0))
         pim = round_list(self.z_preimage.eval().mean(0))
@@ -439,9 +471,9 @@ class SGAN(object):
         plt.close(fig)
 
 
-    def get_real_sample(self):
+    def get_real_sample(self, batch_size):
         return self.real_points[np.random.choice(self.real_n,
-            self.d_batch_size), :]
+            batch_size), :]
 
 
     def get_random_z(self, gen_n):
@@ -502,15 +534,18 @@ class SGAN(object):
             h = 1.
             n = test_sample.shape[0]
             d = test_sample.shape[1]
-            num_combos = 5000
+            max_combos = 5000
+
 
             all_combos = [(val_i, val_j) 
                     for i, val_i in enumerate(test_sample) 
                     for j, val_j in enumerate(test_sample) if i != j]
+            num_combos = min(max_combos, len(all_combos))
             subset_indices = np.random.permutation(range(len(all_combos)))
             combos = [all_combos[i] for i in 
-                    np.random.choice(subset_indices, num_combos)]
+                    np.random.choice(subset_indices, num_combos, replace=False)]
 
+            # Kernelized Stein Discrepancy, U-Statistic.
             def u_fn(x1, x2, test_sample):
                 kernel = np.exp(-1. / h * sum((x1 - x2)**2))
                 part1 = np.inner(-x1, -x2) * kernel 

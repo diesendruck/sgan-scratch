@@ -90,7 +90,7 @@ def round_list(l):
 
 def email_results(graphs_dir, expt, counter):
     outputs = natural_sort(glob(
-        graphs_dir + '/graph_*000.png'))
+        graphs_dir + '/graph_*0000.png'))
     attachments = ' '
     for o in outputs:
         attachments += ' -a {}'.format(o)

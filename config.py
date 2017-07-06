@@ -23,9 +23,9 @@ train_arg.add_argument('--is_train', type=str2bool, default=True)
 train_arg.add_argument('--d_per_iter', type=int, default=1)
 train_arg.add_argument('--g_per_iter', type=int, default=1)
 train_arg.add_argument('--c_per_iter', type=int, default=1)
-train_arg.add_argument('--d_lr', type=float, default=0.01)
-train_arg.add_argument('--g_lr', type=float, default=0.01)
-train_arg.add_argument('--c_lr', type=float, default=0.01)
+train_arg.add_argument('--d_lr', type=float, default=0.001)
+train_arg.add_argument('--g_lr', type=float, default=0.001)
+train_arg.add_argument('--c_lr', type=float, default=0.001)
 train_arg.add_argument('--beta1', type=float, default=0.5)
 train_arg.add_argument('--beta2', type=float, default=0.999)
 train_arg.add_argument('--gamma_d', type=float, default=1)
@@ -35,18 +35,20 @@ train_arg.add_argument('--lambda_k_g', type=float, default=0.001)
 train_arg.add_argument('--lambda_normality_loss', type=float, default=0.001)
 train_arg.add_argument('--max_iter', type=int, default=100000)
 train_arg.add_argument('--optimizer', type=str, default='adam')
-train_arg.add_argument('--training_z', type=str, default='random', choices=['preimage', 'random', 'mix'])
-train_arg.add_argument('--normality_dist_fn', type=str, default='stein', choices=['stein', 'munkres'])
+train_arg.add_argument('--training_z', type=str, default='random',
+        choices=['preimage', 'random', 'mix'])
+train_arg.add_argument('--normality_dist_fn', type=str, default='stein',
+        choices=['stein', 'munkres'])
+train_arg.add_argument('--interpolation_n', type=int, default=10)
 
 # Output
 output_arg = add_argument_group('Output')
-n = 100
-output_arg.add_argument('--tensorboard_step', type=int, default=n)
-output_arg.add_argument('--checkpoint_step', type=int, default=n)
-output_arg.add_argument('--plot_and_print_step', type=int, default=n)
-output_arg.add_argument('--plot_z_preimage_step', type=int, default=n)
+output_arg.add_argument('--tensorboard_step', type=int, default=100)
+output_arg.add_argument('--checkpoint_step', type=int, default=100)
+output_arg.add_argument('--plot_and_print_step', type=int, default=100)
+output_arg.add_argument('--plot_z_preimage_step', type=int, default=100)
 output_arg.add_argument('--email', type=str2bool, default=False)
-output_arg.add_argument('--email_step', type=int, default=10000)
+output_arg.add_argument('--email_step', type=int, default=5000)
 
 # Network
 net_arg = add_argument_group('Network')
@@ -62,10 +64,10 @@ net_arg.add_argument('--g_layers_width', type=int, default=8)
 # Data
 data_arg = add_argument_group('Data')
 data_arg.add_argument('--dataset', type=str, default='gaussian')
-data_arg.add_argument('--real_n', type=int, default=1000)
+data_arg.add_argument('--real_n', type=int, default=50)
 data_arg.add_argument('--real_dim', type=int, default=2)
-data_arg.add_argument('--gen_n', type=int, default=1000)
-data_arg.add_argument('--d_batch_size', type=int, default=25)
+data_arg.add_argument('--gen_n', type=int, default=50)
+data_arg.add_argument('--batch_size', type=int, default=25)
 
 
 def get_config():
