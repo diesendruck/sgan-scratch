@@ -120,6 +120,13 @@ class SGAN(object):
             var for var in tf.global_variables() if 'decoder' in var.name]
         self.d_vars = [
             var for var in tf.global_variables() if 'autoencoder' in var.name]
+        def prod(x):
+            out = 0
+            for xi in x:
+                out *= int(xi)
+            return out
+        for v in tf.global_variables():
+            print '{:10d}'.format(prod(v.shape)), v.name.ljust(50), v.shape
 
 
     def train(self):
@@ -175,17 +182,11 @@ class SGAN(object):
                 # Collect summary items for printing.
                 summary_items = [
                         it,
-                        round_list(
-                            self.sess.run(
-                                [self.d_loss, self.g_loss],
-                                feed_dict = {
-                                    self.z: self.gen_z(),
-                                    self.data_sample: self.gen_data_sample()}),
-                                3),
-                        round_list(self.real_points.mean(0), 3),
-                        round_list(generated.mean(0), 3),
-                        round_list(self.real_points.var(0), 3),
-                        round_list(generated.var(0), 3)]
+                        round_list(self.sess.run( [self.d_loss, self.g_loss], feed_dict = {self.z: self.gen_z(), self.data_sample: self.gen_data_sample()})),
+                        round_list(self.real_points.mean(0)),
+                        round_list(generated.mean(0)),
+                        round_list(self.real_points.var(0)),
+                        round_list(generated.var(0))]
                 si = summary_items
                 print ("iteration: {}, [d_loss, g_loss]: {}, data_mean: {},"
                        " gen_mean: {}, data_var: {}, gen_var: {}").format(

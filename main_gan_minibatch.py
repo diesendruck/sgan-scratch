@@ -30,7 +30,7 @@ g_activations = [tf.nn.tanh, tf.nn.elu]
 g_output = data_dim
 g_layers_width = [[5]] * (g_layers_depth-1) + [[g_output]]
 
-# Define discriminator size and architecture.
+# Define discriFminator size and architecture.
 # Note: it will take as input both true and generated data.
 d_n = data_n + g_n
 d_layers_depth = 5

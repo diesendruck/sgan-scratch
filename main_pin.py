@@ -15,7 +15,7 @@ encoder_depth = 3
 activate_last_layer = False
 
 # Training parameters
-iterations = 100001
+iterations = 10001
 ADAM_rate = 1e-3
 batch_size = 250
 pin_rate = 0.5
@@ -60,7 +60,7 @@ for it in range(iterations):
     #         print val.shape
     _, transformed, embedded, loss_est, fl_est = sess.run([train_op, autoencoded_values, embedding, loss, feature_loss], feed_dict=feed)
     if it % 1000 == 0:
-        print it, loss_est, fl_est
+        print '{:6d} {:8.1f} {:8.1f}'.format(it, loss_est, fl_est)
         plt.subplot(1,2,1); make_grey_chart(embedded[:10,:])
         plt.subplot(1,2,2); make_grey_chart(latent_tanh[data_selection,:][:10,:])
         plt.colorbar()

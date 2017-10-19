@@ -131,8 +131,7 @@ for it in range(max_iter):
                          round_list(points.mean(0)), round_list(fake_data.mean(0)),
                          round_list(points.var(0)), round_list(fake_data.var(0))]
         si = summary_items
-        print "iteration: {}, [d_loss, g_loss]: {}, data_mean: {}, gen_mean: {}, data_var: {}, gen_var: {}".format(
-            si[0], si[1], si[2], si[3], si[4], si[5])
+        print "iteration: {}, [d_loss, g_loss]: {}, data_mean: {}, gen_mean: {}, data_var: {}, gen_var: {}".format(*si[:6])
         
         # Plot results.
         dest_graphs_dir = "./temp/{}/graphs".format(export_directory)
@@ -174,5 +173,6 @@ for it in range(max_iter):
             for o in outputs:
                 attachments += " -a {}".format(o)
             
-            os.system('echo $PWD | mutt -s "scratch epoch {}" {} {}'.format(
-                it, "momod@utexas.edu", attachments)) 
+            # os.system('echo $PWD | mutt -s "scratch epoch {}" {} {}'.format(
+            #     it, "guywcole@utexas.edu", attachments)) 
+
