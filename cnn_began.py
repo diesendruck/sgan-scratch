@@ -54,9 +54,9 @@ def Decoder(z_outer, input_channel, repeat_num, hidden_num, data_format, reuse, 
         for idx in range(repeat_num):
             z = slim.conv2d(z, hidden_num, 3, 1, activation_fn=tf.nn.elu, data_format=data_format)
             z = slim.conv2d(z, hidden_num, 3, 1, activation_fn=tf.nn.elu, data_format=data_format)
-            # if idx < repeat_num - 1:
-            #     z = upscale(z, 2, data_format)
-            z = upscale_fixed(z, layer_sizes[idx], data_format)
+            if idx < repeat_num - 1:
+                z = upscale(z, 2, data_format)
+            # z = upscale_fixed(z, layer_sizes[idx], data_format)
         
         out = slim.conv2d(z, input_channel, 3, 1, activation_fn=None, data_format=data_format)
         out = upscale_fixed(out, final_size, data_format)

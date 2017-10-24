@@ -1,6 +1,8 @@
 temp/*
+./temp
 ./temp/*
 ./img/*
+.idea
 .idea/*
 *.pyc
-./temp
+
