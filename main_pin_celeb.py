@@ -11,7 +11,7 @@ generator_layers = 3
 node_growth_per_layer = 2
 num_channels = 3
 data_format = 'NHWC'
-adam_learning_rate = 1e-5
+adam_learning_rate = 1e-8
 #################################################################
 print 'Creating CelebA loader...'
 scale_size = 64
@@ -24,9 +24,12 @@ loader_test = get_loader(root='../data/CelebA', scale_size=scale_size, data_form
 
 # with tf.variable_scope('main'):
 
-x = loader_train
+# x_trn = loader_train
 
-# x_out, z, disc_vars = DiscriminatorCNN(x=x, input_channel=num_channels, z_num=encoded_dimension, repeat_num=generator_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False)
+x_np = np.random.uniform(0, 255, [batch_size, scale_size, scale_size, 3])/256
+x = tf.constant(x_np, dtype=tf.float16)
+
+# x_out, z, disc_vars = DiscriminatorCNN(x_trn=x_trn, input_channel=num_channels, z_num=encoded_dimension, repeat_num=generator_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False)
 
 z, enc_vars = Encoder(x, z_num=encoded_dimension, repeat_num=generator_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False)
 x_out, dec_vars = Decoder(z, input_channel=num_channels, repeat_num=generator_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, final_size=scale_size)
@@ -50,11 +53,13 @@ for v in enc_vars + dec_vars:
 sess = tf.Session()
 sess.run(init_op)
 print 'Initialized'
-z_temp = sess.run(z)
-print np.array(z_temp).sum()
-print np.array(sess.run(x_out)).sum()
-ael = sess.run(ae_loss)
-print '{:5d} {:-12.2f}'.format(-1, ael)
+ael, z_temp = sess.run([ae_loss, z])
+print '{:5d} {:-12.2f}'.format(-1, ael), z_temp[0, :]
 for q in range(10):
-    _, ael = sess.run(train_ae, ae_loss)
-    print '{:5d} {:-12.2f}'.format(q, ael)
+    _ = sess.run([train_ae])
+    ael, z_temp = sess.run([ae_loss, z])
+    print '{:5d} {:-12.2f}'.format(q, ael), z_temp[0, :]
+
+z_temp, x_out_temp = sess.run([z, x_out])
+
+sess.close()

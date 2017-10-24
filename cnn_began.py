@@ -22,8 +22,8 @@ def GeneratorCNN(z, hidden_num, output_num, repeat_num, data_format, reuse):
     variables = tf.contrib.framework.get_variables(vs)
     return out, variables
 
-def Encoder(x, z_num, repeat_num, hidden_num, data_format, reuse):
-    with tf.variable_scope("Enc", reuse=reuse) as vs:
+def Encoder(x, z_num, repeat_num, hidden_num, data_format, reuse, var_scope="Enc"):
+    with tf.variable_scope(var_scope, reuse=reuse) as vs:
         # Encoder
         x = slim.conv2d(x, hidden_num, 3, 1, activation_fn=tf.nn.elu, data_format=data_format)
         prev_channel_num = hidden_num
@@ -33,41 +33,33 @@ def Encoder(x, z_num, repeat_num, hidden_num, data_format, reuse):
             x = slim.conv2d(x, channel_num, 3, 1, activation_fn=tf.nn.elu, data_format=data_format)
             if idx < repeat_num - 1:
                 x = slim.conv2d(x, channel_num, 3, 2, activation_fn=tf.nn.elu, data_format=data_format)
-                # x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID')
+                # x_trn = tf.contrib.layers.max_pool2d(x_trn, [2, 2], [2, 2], padding='VALID')
         
-        # x = tf.reshape(x, [-1, np.prod([8, 8, channel_num])])
+        # x_trn = tf.reshape(x_trn, [-1, np.prod([8, 8, channel_num])])
         x = tf.reshape(x, [int(x.shape[0]), -1])
         z = slim.fully_connected(x, z_num, activation_fn=None)
     variables = tf.contrib.framework.get_variables(vs)
     return z, variables
 
-def Decoder(z_outer, input_channel, repeat_num, hidden_num, data_format, reuse, final_size):
+def Decoder(z_outer, input_channel, repeat_num, hidden_num, data_format, reuse, final_size, var_scope="Dec"):
     layer_sizes = [0]*repeat_num
     layer_sizes[-1] = int(final_size / 2. + .99)
     for idx in xrange(repeat_num-2, -1, -1):
         layer_sizes[idx] = int(layer_sizes[idx+1]/ 2. + .99)
-    print layer_sizes
-    with tf.variable_scope("Dec", reuse=reuse) as vs:
+    with tf.variable_scope(var_scope, reuse=reuse) as vs:
         num_output = int(np.prod([8, 8, hidden_num]))
         z = slim.fully_connected(z_outer, num_output, activation_fn=None)
-        print z.shape
         z = reshape(z, 8, 8, hidden_num, data_format)
-        print z.shape
-
+        
         for idx in range(repeat_num):
             z = slim.conv2d(z, hidden_num, 3, 1, activation_fn=tf.nn.elu, data_format=data_format)
-            print z.shape
             z = slim.conv2d(z, hidden_num, 3, 1, activation_fn=tf.nn.elu, data_format=data_format)
-            print z.shape
             # if idx < repeat_num - 1:
             #     z = upscale(z, 2, data_format)
             z = upscale_fixed(z, layer_sizes[idx], data_format)
-            print z.shape
         
         out = slim.conv2d(z, input_channel, 3, 1, activation_fn=None, data_format=data_format)
-        print out.shape
         out = upscale_fixed(out, final_size, data_format)
-        print out.shape
     
     variables = tf.contrib.framework.get_variables(vs)
     return out, variables
@@ -84,7 +76,7 @@ def DiscriminatorCNN(x, input_channel, z_num, repeat_num, hidden_num, data_forma
             x = slim.conv2d(x, channel_num, 3, 1, activation_fn=tf.nn.elu, data_format=data_format)
             if idx < repeat_num - 1:
                 x = slim.conv2d(x, channel_num, 3, 2, activation_fn=tf.nn.elu, data_format=data_format)
-                # x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID')
+                # x_trn = tf.contrib.layers.max_pool2d(x_trn, [2, 2], [2, 2], padding='VALID')
         
         x = tf.reshape(x, [-1, np.prod([8, 8, channel_num])])
         z = x = slim.fully_connected(x, z_num, activation_fn=None)
@@ -197,9 +189,9 @@ def binary_classifier(
             if idx < repeat_num - 1:
                 x = slim.conv2d(x, channel_num, 3, 2, activation_fn=tf.nn.elu,
                                 data_format=data_format)
-                # x = tf.contrib.layers.max_pool2d(x, [2, 2], [2, 2], padding='VALID')
+                # x_trn = tf.contrib.layers.max_pool2d(x_trn, [2, 2], [2, 2], padding='VALID')
 
-        # x = tf.reshape(x, [-1, np.prod([8, 8, channel_num])])
+        # x_trn = tf.reshape(x_trn, [-1, np.prod([8, 8, channel_num])])
         vectorized_dim = np.prod(x.get_shape().as_list()[1:])
         x = tf.reshape(x, [-1, vectorized_dim])
         x_emb = slim.fully_connected(x, z_num, activation_fn=None)
