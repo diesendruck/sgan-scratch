@@ -282,7 +282,8 @@ with tf.Graph().as_default():
             # sess.run([train_cla], feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa, adam_learning_rate_ph: learning_rate_current})
             lx, lg, lz, lp = sess.run([loss_x, loss_g, loss_z, loss_pin],
                                       feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa})
-            kappa = max(0.1, min(0.9, kappa + kappa_learning_rate * (gamma_target * lx - lg)))
+            # kappa = max(0.1, min(0.9, kappa + kappa_learning_rate * (gamma_target * lx - lg)))
+            kappa = kappa + kappa_learning_rate * (gamma_target * lx - lg)
             results[step, :] = [lx, lg, lz, lp, kappa]
             print_cycle = (step % print_interval == 0) or (step == 1)
             if print_cycle:

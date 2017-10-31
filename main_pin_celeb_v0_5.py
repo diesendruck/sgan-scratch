@@ -6,19 +6,11 @@ import numpy as np
 import os, sys
 from PIL import Image
 from time import *
-import matplotlib
-matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
 #######################################################################
 # Run setup
 #######################################################################
-
-# Supervisor params
-tag = 'pin_giant'
-logdir = 'log/pin_celeb/{}/'.format(tag)
-imgdir = 'img/pin_celeb/{}/'.format(tag)
-
 # Data loading params
 image_size = 64  # Edge-size of the square images for input and output
 image_channels = 3  # How many channels in the image (don't change this, 3 is hardcoded in places)
@@ -48,9 +40,13 @@ graph_interval = 100  # How often to output the graphics set
 # Penalty params
 PIN_penalty_mode = ['MSE', 'CE'][1]
 gamma_target = 1.0  # Target ration of L(G(y))/L(x_trn)
-lambda_pin_value = 0.100  # Scaling factor of penalty for label mismatch
+lambda_pin_value = 0.001  # Scaling factor of penalty for label mismatch
 kappa = 0.  # Initial value of kappa for BEGAN
 kappa_learning_rate = 0.0005  # Learning rate for kappa
+
+# Supervisor params
+logdir = 'log/pin_celeb/v0_5_{}/'.format(PIN_penalty_mode)
+imgdir = 'img/pin_celeb/v0_5_{}/'.format(PIN_penalty_mode)
 
 # Make sure imgdir exists
 for idx in range(len(imgdir.split('/')[:-1])):
@@ -249,7 +245,6 @@ with tf.Graph().as_default():
     with sv.managed_session() as sess:
         # sess = tf.Session()
         # coord = tf.train.Coordinator()
-        sv.start_standard_services(sess)
         coord = sv.coord
         enq_f_threads = qr_f.create_threads(sess, coord=coord, start=True)
         enq_i_threads = qr_i.create_threads(sess, coord=coord, start=True)
@@ -279,8 +274,7 @@ with tf.Graph().as_default():
             # sess.run([train_cla], feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa, adam_learning_rate_ph: learning_rate_current})
             lx, lg, lz, lp = sess.run([loss_x, loss_g, loss_z, loss_pin],
                                       feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa})
-            # kappa = max(0.1, min(0.9, kappa + kappa_learning_rate * (gamma_target * lx - lg)))
-            kappa = kappa + kappa_learning_rate * (gamma_target * lx - lg)
+            kappa = max(0.1, min(0.9, kappa + kappa_learning_rate * (gamma_target * lx - lg)))
             results[step, :] = [lx, lg, lz, lp, kappa]
             print_cycle = (step % print_interval == 0) or (step == 1)
             if print_cycle:
