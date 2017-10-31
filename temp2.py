@@ -6,19 +6,10 @@ import numpy as np
 import os, sys
 from PIL import Image
 from time import *
-import matplotlib
-matplotlib.use('Agg')
-from matplotlib import pyplot as plt
 
 #######################################################################
 # Run setup
 #######################################################################
-
-# Supervisor params
-tag = 'began_graphics'
-logdir = 'log/began_celeb/{}/'.format(tag)
-imgdir = 'img/began_celeb/{}/'.format(tag)
-
 # Data loading params
 image_size = 64  # Edge-size of the square images for input and output, scale_size = 64 default
 image_channels = 3  # How many channels in the image (don't change this, 3 is hardcoded in places)
@@ -31,18 +22,18 @@ label_choices = [4, 15, 20, 22, 24]  # Which labels to use (will print your choi
 n_labels = len(label_choices)  # How many label choices you made
 # CNN params
 dimension_g = 16  # Dimension of the generators' inputs
-encoded_dimension = 256 # 64 # Dimension of the encoded layer, znum = 256 by default
+encoded_dimension = 64 # Dimension of the encoded layer, znum = 256 by default
 cnn_layers = 6  # How many layers in each convolutional layer
-node_growth_per_layer = 128 # 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
+node_growth_per_layer = 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
 
 # Training params
-batch_size_x = 16 # 64  # Nubmer of samples in each training cycle, default 16
-batch_size_g = 16 # 64  # Number of generated samples, default 16
+batch_size_x = 64  # Nubmer of samples in each training cycle, default 16
+batch_size_g = 64  # Number of generated samples, default 16
 adam_beta_1 = 0.5   # Anti-decay rate of first moment in ADAM optimizer
 adam_beta_2 = 0.999 # Anti-decay rate of second moment in ADAM optimizer
-learning_rate_initial = 0.00001 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
+learning_rate_initial = 0.00008 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
 learning_rate_decay = 1000.  # How many steps to reduce the learning rate by a factor of e
-learning_rate_minimum = 0.00001 # 1e-4  # Floor for the learning rate
+learning_rate_minimum = 0.00008 # 1e-4  # Floor for the learning rate
 training_steps = 125000  # Steps of the ADAM optimizers
 print_interval = 10  # How often to print a line of output
 graph_interval = 100  # How often to output the graphics set
@@ -54,6 +45,10 @@ lambda_pin_value = 0.  # Scaling factor of penalty for label mismatch
 kappa = 0.  # Initial value of kappa for BEGAN
 kappa_learning_rate = 0.0005  # Learning rate for kappa
 lambda_k_initial = 0.001 # Initial value for lambda_k
+
+# Supervisor params
+logdir = 'log/began_celeb/v0_5_giant/'
+imgdir = 'img/began_celeb/v0_5/'
 
 # Make sure imgdir exists
 for idx in range(len(imgdir.split('/')[:-1])):
@@ -248,11 +243,10 @@ with tf.Graph().as_default():
     #######################################################################
     # Graph running
     #######################################################################
-    sv = tf.train.Supervisor(logdir=logdir, save_model_secs=30)
+    sv = tf.train.Supervisor(logdir=logdir)
     with sv.managed_session() as sess:
         # sess = tf.Session()
         # coord = tf.train.Coordinator()
-        sv.start_standard_services(sess)
         coord = sv.coord
         enq_f_threads = qr_f.create_threads(sess, coord=coord, start=True)
         enq_i_threads = qr_i.create_threads(sess, coord=coord, start=True)
@@ -260,20 +254,13 @@ with tf.Graph().as_default():
         
         # Print some individuals just to test label alignment
         i, l = sess.run([imgs, img_lbls])
-        plt.figure(figsize=[8, 8])
-        plt.subplot(1, 2, 1)
-        plt.imshow(1. - i[:8, :, :, :].reshape([-1, image_size, 3]), interpolation='nearest')
-        plt.subplot(1, 2, 2)
-        plt.imshow(l[:8, :], interpolation='nearest')
-        plt.xticks(range(n_labels), label_names, rotation=90)
-        plt.savefig(imgdir + 'label_alignment.png')
-        plt.close()
         
         results = np.zeros([training_steps + 1, 5])
         lx, lg, lz, lp = sess.run([loss_x, loss_g, loss_z, loss_pin],
                                   feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa})
         results[0, :] = [lx, lg, lz, lp, kappa]
         
+        print 'Date                  Step    Loss_X    Loss_G    Loss_Z  Loss_PIN     kappa learning_rate'
         for step in xrange(1, training_steps + 1):
             learning_rate_current = max(learning_rate_minimum,
                                         np.exp(np.log(learning_rate_initial) - step / learning_rate_decay))
@@ -290,41 +277,6 @@ with tf.Graph().as_default():
                 print '{} {:6d} {:-9.3f} {:-9.3f} {:-9.3f} {:-9.3f} {:-9.3f} {:-10.8f} {}'.format(now(), step, lx, lg, lz, lp,
                                                                                                   kappa, learning_rate_current,
                                                                                                   ' Graphing' if image_print_cycle else '')
-                if image_print_cycle:
-                    output = sess.run([x_trn_short, x_gen_short, x_ins, x_oos, x_demo,
-                                       x_out_trn_short, x_out_gen_short, x_out_ins, x_out_oos, x_out_demo])
-                    print '  ', ', '.join(['{:6.2f}'.format(item.mean()) for item in output])
-                    for idx in range(len(output)):
-                        output[idx] = output[idx].reshape([-1, image_size, 3])
-                        # print idx, output[idx].shape
-                    plot_names = ['In-Sample Production', 'Generated', 'In-Sample (fixed)', 'Out-of-Sample (fixed)',
-                                  'Manipulated']
-                    plt.figure(figsize=[16, 8])
-                    for image_idx in range(5):
-                        plt.subplot(1, 5, image_idx + 1)
-                        plt.imshow(1. - np.append(output[image_idx], output[image_idx + 5], 1), interpolation='nearest')
-                        plt.title(plot_names[image_idx])
-                        if image_idx == 4:
-                            plt.yticks([image_size * (n + .5) for n in range(n_labels + 1)], ['None'] + label_names,
-                                       rotation=90)
-                    plt.savefig(imgdir + 'sample_images_{}.png'.format(step))
-                    plt.close()
-                    
-                    # Print some individuals just to test label alignment
-                    i, l, zed = sess.run([x_trn_short, img_lbls, z_trn])
-                    plt.figure(figsize=[8, 8])
-                    plt.subplot(1, 3, 1)
-                    plt.imshow(1. - i.reshape([-1, image_size, 3]), interpolation='nearest')
-                    plt.subplot(1, 3, 2)
-                    plt.imshow(l[:8, :], interpolation='nearest', cmap=plt.get_cmap('Greys'))
-                    plt.xticks(range(n_labels), label_names, rotation=90)
-                    plt.subplot(1, 3, 3)
-                    plt.imshow(np.tanh(zed[:8, :n_labels]), interpolation='nearest', cmap=plt.get_cmap('Greys'))
-                    plt.xticks(range(n_labels), label_names, rotation=90)
-                    plt.savefig(imgdir + 'label_alignment_{}.png'.format(step))
-                    plt.close()
-                    print l.mean(0), np.tanh(zed[:, :n_labels]).mean(0)
-                    print 'Date                  Step    Loss_X    Loss_G    Loss_Z  Loss_PIN     kappa learning_rate'
 
 # #######################################################################
 # # Clean up the Tensorflow graph
