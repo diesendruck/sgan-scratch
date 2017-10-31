@@ -6,13 +6,21 @@ import numpy as np
 import os, sys
 from PIL import Image
 from time import *
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
 #######################################################################
 # Run setup
 #######################################################################
+
+# Supervisor params
+tag = 'pin_giant'
+logdir = 'log/pin_celeb/{}/'.format(tag)
+imgdir = 'img/pin_celeb/{}/'.format(tag)
+
 # Data loading params
-image_size = 64  # Edge-size of the square images for input and output
+image_size = 64  # Edge-size of the square images for input and output, scale_size = 64 default
 image_channels = 3  # How many channels in the image (don't change this, 3 is hardcoded in places)
 data_dir = '../data/CelebA/splits/train/'  # Where to find the training images
 oos_dir = '../data/CelebA/splits/validate/'  # Where to find the validation images
@@ -23,30 +31,29 @@ label_choices = [4, 15, 20, 22, 24]  # Which labels to use (will print your choi
 n_labels = len(label_choices)  # How many label choices you made
 # CNN params
 dimension_g = 16  # Dimension of the generators' inputs
-encoded_dimension = 64  # Dimension of the encoded layer
+encoded_dimension = 256 # 64 # Dimension of the encoded layer, znum = 256 by default
 cnn_layers = 6  # How many layers in each convolutional layer
-node_growth_per_layer = 4  # Linear rate of growth between CNN layers
+node_growth_per_layer = 128 # 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
 
 # Training params
-batch_size_x = 64  # Nubmer of samples in each training cycle
-batch_size_g = 64  # Number of generated samples
-learning_rate_initial = 1e-5  # Base learning rate for the ADAM optimizers; may be decreased over time
+batch_size_x = 16 # 64  # Nubmer of samples in each training cycle, default 16
+batch_size_g = 16 # 64  # Number of generated samples, default 16
+adam_beta_1 = 0.5   # Anti-decay rate of first moment in ADAM optimizer
+adam_beta_2 = 0.999 # Anti-decay rate of second moment in ADAM optimizer
+learning_rate_initial = 0.00001 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
 learning_rate_decay = 1000.  # How many steps to reduce the learning rate by a factor of e
-learning_rate_minimum = 1e-5  # Floor for the learning rate
+learning_rate_minimum = 0.00001 # 1e-4  # Floor for the learning rate
 training_steps = 125000  # Steps of the ADAM optimizers
 print_interval = 10  # How often to print a line of output
 graph_interval = 100  # How often to output the graphics set
 
 # Penalty params
 PIN_penalty_mode = ['MSE', 'CE'][1]
-gamma_target = 1.0  # Target ration of L(G(y))/L(x_trn)
-lambda_pin_value = 0.001  # Scaling factor of penalty for label mismatch
+gamma_target = 1.0  # Target ration of L(G(y))/L(x_trn), default 1
+lambda_pin_value = 0.100  # Scaling factor of penalty for label mismatch
 kappa = 0.  # Initial value of kappa for BEGAN
 kappa_learning_rate = 0.0005  # Learning rate for kappa
-
-# Supervisor params
-logdir = 'log/pin_celeb/v0_5_{}/'.format(PIN_penalty_mode)
-imgdir = 'img/pin_celeb/v0_5_{}/'.format(PIN_penalty_mode)
+lambda_k_initial = 0.001 # Initial value for lambda_k
 
 # Make sure imgdir exists
 for idx in range(len(imgdir.split('/')[:-1])):
@@ -183,7 +190,7 @@ with tf.Graph().as_default():
     loss_g = tf.losses.mean_squared_error(x_gen, x_out_gen)
     zp = z_trn[:, :n_labels]
     if PIN_penalty_mode == 'CE':
-        loss_z = -tf.reduce_sum((zp * (img_lbls + 1.) / 2. - tf.log(1. + tf.exp(zp))) * tf.abs(img_lbls))
+        loss_z = -tf.reduce_sum((zp * (img_lbls + 1.) / 2. - tf.log(1. + tf.exp(zp))) * tf.abs(img_lbls)) / (batch_size_x + 0.)
     elif PIN_penalty_mode == 'MSE':
         loss_z = tf.losses.mean_squared_error(img_lbls, tf.tanh(zp), weights=tf.abs(img_lbls))
     else:
@@ -274,7 +281,8 @@ with tf.Graph().as_default():
             # sess.run([train_cla], feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa, adam_learning_rate_ph: learning_rate_current})
             lx, lg, lz, lp = sess.run([loss_x, loss_g, loss_z, loss_pin],
                                       feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa})
-            kappa = max(0.1, min(0.9, kappa + kappa_learning_rate * (gamma_target * lx - lg)))
+            # kappa = max(0.1, min(0.9, kappa + kappa_learning_rate * (gamma_target * lx - lg)))
+            kappa = kappa + kappa_learning_rate * (gamma_target * lx - lg)
             results[step, :] = [lx, lg, lz, lp, kappa]
             print_cycle = (step % print_interval == 0) or (step == 1)
             if print_cycle:
