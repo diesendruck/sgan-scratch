@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 #######################################################################
 
 # Supervisor params
-tag = 'pin_giant_2'
+tag = 'pin_giant_4'
 logdir = 'log/pin_celeb/{}/'.format(tag)
 imgdir = 'img/pin_celeb/{}/'.format(tag)
 
@@ -31,18 +31,19 @@ label_choices = [4, 15, 20, 22, 24]  # Which labels to use (will print your choi
 n_labels = len(label_choices)  # How many label choices you made
 # CNN params
 dimension_g = 16  # Dimension of the generators' inputs
-encoded_dimension = 256 # 64 # Dimension of the encoded layer, znum = 256 by default
-cnn_layers = 6  # How many layers in each convolutional layer
-node_growth_per_layer = 128 # 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
+encoded_dimension = 128 # 64 # Dimension of the encoded layer, znum = 256 by default
+cnn_layers = 4  # How many layers in each convolutional layer
+node_growth_per_layer = 32 # 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
 
 # Training params
-batch_size_x = 16 # 64  # Nubmer of samples in each training cycle, default 16
-batch_size_g = 16 # 64  # Number of generated samples, default 16
+first_iteration = 29101
+batch_size_x = 64 # 64  # Nubmer of samples in each training cycle, default 16
+batch_size_g = 64 # 64  # Number of generated samples, default 16
 adam_beta_1 = 0.5   # Anti-decay rate of first moment in ADAM optimizer
 adam_beta_2 = 0.999 # Anti-decay rate of second moment in ADAM optimizer
-learning_rate_initial = 0.00001 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
-learning_rate_decay = 1000.  # How many steps to reduce the learning rate by a factor of e
-learning_rate_minimum = 0.00001 # 1e-4  # Floor for the learning rate
+learning_rate_initial = 0.00010 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
+learning_rate_decay = 25000.  # How many steps to reduce the learning rate by a factor of e
+learning_rate_minimum = 0.0000001 # 1e-4  # Floor for the learning rate
 training_steps = 125000  # Steps of the ADAM optimizers
 print_interval = 10  # How often to print a line of output
 graph_interval = 100  # How often to output the graphics set
@@ -51,7 +52,8 @@ graph_interval = 100  # How often to output the graphics set
 PIN_penalty_mode = ['MSE', 'CE'][1]
 gamma_target = 1.0  # Target ration of L(G(y))/L(x_trn), default 1
 lambda_pin_value = 0.100  # Scaling factor of penalty for label mismatch
-kappa = 0.  # Initial value of kappa for BEGAN
+kappa = 0.072  # Initial value of kappa for BEGAN
+kappa_range = [0., 1.]
 kappa_learning_rate = 0.0005  # Learning rate for kappa
 lambda_k_initial = 0.001 # Initial value for lambda_k
 
@@ -139,12 +141,12 @@ def pin_cnn(input, lbls=None, n_labels=None, reuse=False, encoded_dimension=16, 
     if lbls is None:
         z_pin = tf.concat([tf.tanh(z[:, :n_labels]), z[:, n_labels:]], 1)
     else:
-        z_pin = tf.concat([tf.tanh(z[:, :n_labels]) * (1. - tf.abs(lbls)) + lbls * tf.abs(lbls), z[:, n_labels:]], 1)
+        z_pin = tf.concat([tf.tanh(z[:, :n_labels]) * (1. - tf.abs(lbls)) + lbls, z[:, n_labels:]], 1)
     output, dec_vars = Decoder(z_pin, input_channel=image_channels, repeat_num=cnn_layers,
                                hidden_num=node_growth_per_layer, data_format=data_format, reuse=reuse,
                                final_size=scale_size)
     output = tf.maximum(tf.minimum(output, 1.), 0.)
-    return z, output, enc_vars, dec_vars
+    return z, z_pin, output, enc_vars, dec_vars
 
 
 #######################################################################
@@ -171,7 +173,7 @@ tf.Graph().as_default()
 # The model for the real-data training samples
 imgs, img_lbls, qr_f, qr_i = img_and_lbl_queue_setup(filenames, labels)
 x_trn = imgs
-z_trn, x_out_trn, enc_vars, dec_vars = pin_cnn(input=x_trn, lbls=img_lbls if lambda_pin_value > 0. else None,
+z_trn, z_pin_trn, x_out_trn, enc_vars, dec_vars = pin_cnn(input=x_trn, lbls=img_lbls if lambda_pin_value > 0. else None,
                                                n_labels=n_labels, reuse=False,
                                                encoded_dimension=encoded_dimension, cnn_layers=cnn_layers,
                                                node_growth_per_layer=node_growth_per_layer, data_format=data_format,
@@ -182,7 +184,7 @@ y = tf.random_normal([batch_size_g, dimension_g], dtype=tf.float32)
 x_gen, gen_vars = Decoder(y, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer,
                           data_format=data_format, reuse=False, final_size=scale_size, var_scope='Gen')
 x_gen = tf.maximum(tf.minimum(x_gen, 1.), 0.)
-z_gen, x_out_gen, _, _ = pin_cnn(input=x_gen, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension,
+z_gen, z_pin_gen, x_out_gen, _, _ = pin_cnn(input=x_gen, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension,
                                  cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer,
                                  data_format=data_format, image_channels=image_channels)
 
@@ -190,17 +192,19 @@ z_gen, x_out_gen, _, _ = pin_cnn(input=x_gen, n_labels=n_labels, reuse=True, enc
 loss_x = tf.losses.mean_squared_error(x_trn, x_out_trn)
 loss_g = tf.losses.mean_squared_error(x_gen, x_out_gen)
 zp = z_trn[:, :n_labels]
+
 if PIN_penalty_mode == 'CE':
     loss_z = -tf.reduce_sum((zp * (img_lbls + 1.) / 2. - tf.log(1. + tf.exp(zp))) * tf.abs(img_lbls)) / (batch_size_x + 0.)
 elif PIN_penalty_mode == 'MSE':
     loss_z = tf.losses.mean_squared_error(img_lbls, tf.tanh(zp), weights=tf.abs(img_lbls))
 else:
     raise 'Need a valid penalty mode the PIN'
+
 lambda_pin = tf.placeholder(tf.float32, [])
 lambda_ae = tf.placeholder(tf.float32, [])
 loss_gan = loss_x - lambda_ae * loss_g
 loss_gen = loss_g
-loss_pin = loss_gan + lambda_pin * loss_z
+loss_pin = loss_x - lambda_ae * loss_g + lambda_pin * loss_z
 
 # Set up the optimizers
 adam_learning_rate_ph = tf.placeholder(dtype=tf.float32, shape=[])
@@ -217,15 +221,27 @@ init_op = tf.global_variables_initializer()
 # Run the model on a consistent selection of in-sample pictures
 img_ins, lbls_ins, fs_ins = load_practice_images(data_dir, n_images=8, labels=labels)
 x_ins = preprocess(img_ins, image_size=image_size)
-z_ins, x_out_ins, _, _ = pin_cnn(input=x_ins, n_labels=n_labels, reuse=True,
+z_ins, z_pin_ins, x_out_ins, _, _ = pin_cnn(input=x_ins, n_labels=n_labels, reuse=True,
                                  encoded_dimension=encoded_dimension, cnn_layers=cnn_layers,
                                  node_growth_per_layer=node_growth_per_layer, data_format=data_format,
                                  image_channels=image_channels)
 
+# Run the model on a consistent selection of in-sample pictures
+n_big = 1024
+img_big, lbls_big, fs_big = load_practice_images(data_dir, n_images=n_big, labels=labels)
+x_big = preprocess(img_big, image_size=image_size)
+z_big, z_pin_out, x_out_big, _, _ = pin_cnn(input=x_big, n_labels=n_labels, reuse=True,
+                                 encoded_dimension=encoded_dimension, cnn_layers=cnn_layers,
+                                 node_growth_per_layer=node_growth_per_layer, data_format=data_format,
+                                 image_channels=image_channels)
+# n_yes = tf.reduce_sum(lbls_big, 0)
+# n_yes = ((img_lbls + 1.)/2.).sum(0)
+# delta_matrix = np.array([[1./n_yes[j] if lbls_big[i,j] == 1. else 1./(n_big - n_yes) for j in range(n_labels)] for i in range(n_big)])
+
 # Run the model on a consistent selection of out-of-sample pictures
 img_oos, lbls_oos, fs_oos = load_practice_images(oos_dir, n_images=8, labels=labels)
 x_oos = preprocess(img_oos, image_size=image_size)
-z_oos, x_out_oos, _, _ = pin_cnn(input=x_oos, n_labels=n_labels, reuse=True,
+z_oos, z_pin_oos, x_out_oos, _, _ = pin_cnn(input=x_oos, n_labels=n_labels, reuse=True,
                                  encoded_dimension=encoded_dimension, cnn_layers=cnn_layers,
                                  node_growth_per_layer=node_growth_per_layer, data_format=data_format,
                                  image_channels=image_channels)
@@ -236,8 +252,9 @@ x_demo = tf.tile(x_demo, [n_labels + 1, 1, 1, 1])
 modifier = np.ones([n_labels + 1, n_labels], np.float32)
 for n in range(n_labels):
     modifier[n + 1, n] *= -1.
+
 lbls_demo = tf.tile(tf.cast(lbls_ins[:1, :], tf.float32), [n_labels + 1, 1]) * modifier
-z_demo, x_out_demo, _, _ = pin_cnn(input=x_demo, lbls=lbls_demo, n_labels=n_labels, reuse=True,
+z_demo, z_pin_demo, x_out_demo, _, _ = pin_cnn(input=x_demo, lbls=lbls_demo, n_labels=n_labels, reuse=True,
                                    encoded_dimension=encoded_dimension, cnn_layers=cnn_layers,
                                    node_growth_per_layer=node_growth_per_layer, data_format=data_format,
                                    image_channels=image_channels)
@@ -253,6 +270,7 @@ sv = tf.train.Supervisor(logdir=logdir)
 with sv.managed_session() as sess:
     # sess = tf.Session()
     # coord = tf.train.Coordinator()
+    sv.start_standard_services(sess)
     coord = sv.coord
     enq_f_threads = qr_f.create_threads(sess, coord=coord, start=True)
     enq_i_threads = qr_i.create_threads(sess, coord=coord, start=True)
@@ -274,7 +292,7 @@ with sv.managed_session() as sess:
                               feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa})
     results[0, :] = [lx, lg, lz, lp, kappa]
     
-    for step in xrange(40001, training_steps + 1):
+    for step in xrange(first_iteration, training_steps + 1):
         learning_rate_current = max(learning_rate_minimum,
                                     np.exp(np.log(learning_rate_initial) - step / learning_rate_decay))
         sess.run([train_gan, train_gen],
@@ -282,8 +300,8 @@ with sv.managed_session() as sess:
         # sess.run([train_cla], feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa, adam_learning_rate_ph: learning_rate_current})
         lx, lg, lz, lp = sess.run([loss_x, loss_g, loss_z, loss_pin],
                                   feed_dict={lambda_pin: lambda_pin_value, lambda_ae: kappa})
-        # kappa = max(0.1, min(0.9, kappa + kappa_learning_rate * (gamma_target * lx - lg)))
-        kappa = kappa + kappa_learning_rate * (gamma_target * lx - lg)
+        kappa = max(kappa_range[0], min(kappa_range[1], kappa + kappa_learning_rate * (gamma_target * lx - lg)))
+        # kappa = kappa + kappa_learning_rate * (gamma_target * lx - lg)
         results[step, :] = [lx, lg, lz, lp, kappa]
         print_cycle = (step % print_interval == 0) or (step == 1)
         if print_cycle:
@@ -295,6 +313,10 @@ with sv.managed_session() as sess:
                 output = sess.run([x_trn_short, x_gen_short, x_ins, x_oos, x_demo,
                                    x_out_trn_short, x_out_gen_short, x_out_ins, x_out_oos, x_out_demo])
                 print '  ', ', '.join(['{:6.2f}'.format(item.mean()) for item in output])
+                tmp = output[-1] + 0.
+                for idx in reversed(range(6)):
+                    tmp[idx, :, :, :] -= tmp[0, :, :, :]
+                tmp = np.abs(tmp.reshape([-1, image_size, 3]))
                 for idx in range(len(output)):
                     output[idx] = output[idx].reshape([-1, image_size, 3])
                     # print idx, output[idx].shape
@@ -302,12 +324,15 @@ with sv.managed_session() as sess:
                               'Manipulated']
                 plt.figure(figsize=[16, 8])
                 for image_idx in range(5):
-                    plt.subplot(1, 5, image_idx + 1)
+                    plt.subplot(1, 6, image_idx + 1)
                     plt.imshow(1. - np.append(output[image_idx], output[image_idx + 5], 1), interpolation='nearest')
                     plt.title(plot_names[image_idx])
                     if image_idx == 4:
                         plt.yticks([image_size * (n + .5) for n in range(n_labels + 1)], ['None'] + label_names,
                                    rotation=90)
+                plt.subplot(1, 6, 6)
+                plt.imshow(1. - tmp / tmp.max(), interpolation='nearest')
+                plt.title('Diff from base')
                 plt.savefig(imgdir + 'sample_images_{:06d}.png'.format(step))
                 plt.close()
                 
@@ -326,15 +351,19 @@ with sv.managed_session() as sess:
                 plt.close()
                 print l.mean(0), np.tanh(zed[:, :n_labels]).mean(0)
                 print 'Date                  Step    Loss_X    Loss_G    Loss_Z  Loss_PIN     kappa learning_rate'
-                embeddings = sess.run(z_trn)
-                m = embeddings.mean(0)
-                v = embeddings.var(0)
-                normalized_embeddings = (embeddings - m) / np.sqrt(v)
-                plt.imshow(normalized_embeddings.transpose().dot(normalized_embeddings), interpolation='nearest', cmap=plt.get_cmap('Greys'))
+                e = sess.run(z_big)
+                m = e.mean(0)
+                v = e.var(0)
+                # M = np.linalg.inv(e.transpose().dot(e)).dot(e.transpose()).dot(l)
+                normalized_embeddings = (e - m) / np.sqrt(v)
+                
+                plt.imshow(np.abs(normalized_embeddings.transpose().dot(normalized_embeddings)), interpolation='nearest', cmap=plt.get_cmap('Greys'))
                 plt.colorbar()
                 plt.title('Correlation of embeddings')
                 plt.savefig(imgdir + 'emedding_correlation_{:06d}.png'.format(step))
                 plt.close()
+                
+                
 # #######################################################################
 # # Clean up the Tensorflow graph
 # #######################################################################

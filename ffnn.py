@@ -50,12 +50,12 @@ def ffnn(input, num_layers=3, width=3, output_dim=10, activations=[tf.tanh], act
                 sum(layer_widths[num_layers - 1])) + ', explicit depth: ' + str(output_dim) + ')')
     
     # Set-up/retrieve the appropriate nodes within scope
-    with tf.variable_scope(scope, reuse=reuse):
+    with tf.variable_scope(scope, reuse=reuse) as vs:
         Ws = [tf.get_variable("W_" + str(l), shape=[input_dim if l == 0 else sum(layer_widths[l - 1]),
                                                     output_dim if l == num_layers - 1 else sum(layer_widths[l])],
-                              dtype=tf.float64) for l in range(num_layers)]
+                              dtype=input.dtype) for l in range(num_layers)]
         Bs = [tf.get_variable("B_" + str(l), shape=[output_dim if l == num_layers - 1 else sum(layer_widths[l])],
-                              dtype=tf.float64) for l in range(num_layers)]
+                              dtype=input.dtype) for l in range(num_layers)]
         Hs = [None] * num_layers
         HLs = [None] * num_layers
         for l in range(num_layers):
@@ -66,4 +66,7 @@ def ffnn(input, num_layers=3, width=3, output_dim=10, activations=[tf.tanh], act
                      range(len(activations))], 1)
             else:
                 Hs[l] = HLs[l]
-    return Hs[l]
+    
+    variables = tf.contrib.framework.get_variables(vs)
+    return Hs[l], variables
+
