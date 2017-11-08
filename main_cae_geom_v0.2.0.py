@@ -91,7 +91,7 @@ def img_and_lbl_queue_setup(filenames, labels):
     labels_tensor = tf.constant(labels, dtype=tf.float32)
     
     filenames_tensor = tf.constant(filenames)
-    fnq = tf.RandomShuffleQueue(capacity=200, min_after_dequeue=100, dtypes=tf.string)
+    fnq = tf.RandomShuffleQueue(capacity=150, min_after_dequeue=100, dtypes=tf.string)
     fnq_enq_op = fnq.enqueue_many(filenames_tensor)
     filename = fnq.dequeue()
     
@@ -226,13 +226,13 @@ def CAE_C_AE(input, input_labels):
     c_loss_ce   = CrossEntropy(  c_lp, input_labels)
     return cae_aei, ae_aei, cae_lp, c_lp, cae_loss_ae, ae_loss_ae, cae_loss_ce, c_loss_ce
 
-pre_imgs_oosf, img_lbls_oosf, fs_oosf = load_practice_images(oos_dir, n_images=batch_size_x, labels=labels)
+pre_imgs_oosf, img_lbls_oosf, fs_oosf = load_practice_images(oos_dir, n_images=len(filenames_oos), labels=labels)
 imgs_oosf = preprocess(pre_imgs_oosf, image_size=image_size)
 img_lbls_oosf_tf = tf.constant(img_lbls_oosf, dtype=tf.float32)
 cae_aei_oosf, ae_aei_oosf, cae_lp_oosf, c_lp_oosf, cae_loss_ae_oosf, ae_loss_ae_oosf, cae_loss_ce_oosf, c_loss_ce_oosf = CAE_C_AE(imgs_oosf, img_lbls_oosf_tf)
 
-imgs_oosr, img_lbls_oosr, qr_f_oosr, qr_i_oosr = img_and_lbl_queue_setup(filenames, labels)
-cae_aei_oosr, ae_aei_oosr, cae_lp_oosr, c_lp_oosr, cae_loss_ae_oosr, ae_loss_ae_oosr, cae_loss_ce_oosr, c_loss_ce_oosr = CAE_C_AE(imgs_oosr, img_lbls_oosr)
+# imgs_oosr, img_lbls_oosr, qr_f_oosr, qr_i_oosr = img_and_lbl_queue_setup(filenames_oos, labels)
+cae_aei_oosr, ae_aei_oosr, cae_lp_oosr, c_lp_oosr, cae_loss_ae_oosr, ae_loss_ae_oosr, cae_loss_ce_oosr, c_loss_ce_oosr = CAE_C_AE(imgs_oosf, img_lbls_oosf_tf)
 
 images_short = imgs[:8, :, :, :]
 cae_autoencoded_images_short = cae_autoencoded_images[:8, :, :, :]
@@ -247,8 +247,8 @@ with sv.managed_session() as sess:
     coord = sv.coord
     enq_f_threads = qr_f.create_threads(sess, coord=coord, start=True)
     enq_i_threads = qr_i.create_threads(sess, coord=coord, start=True)
-    enq_f_oos_threads = qr_f_oosr.create_threads(sess, coord=coord, start=True)
-    enq_i_oos_threads = qr_i_oosr.create_threads(sess, coord=coord, start=True)
+    # enq_f_oosr_threads = qr_f_oosr.create_threads(sess, coord=coord, start=True)
+    # enq_i_oosr_threads = qr_i_oosr.create_threads(sess, coord=coord, start=True)
     sess.run(init_op)
     
     # Print some individuals just to test label alignment
@@ -307,7 +307,7 @@ with sv.managed_session() as sess:
                 # results_names = ['Autoencoder Loss', 'Classifier Loss', 'Combined Loss', 'OOS Autoencoder Loss', 'OOS Classifier Loss', 'Kappa']
                 results_names = ['C-AE AE Loss', 'AE Loss', 'C-AE C Loss', 'C Loss', 'C-AE AE OOS Loss', 'AE OOS Loss', 'C-AE C OOS Loss', 'C OOS Loss', 'Kappa']
                 for idx in range(results.shape[1]):
-                    plt.subplot(5, 2, idx+1)
+                    plt.subplot(4, 4, idx+1)
                     plt.plot(results[:step, idx])
                     plt.title(results_names[idx])
                 plt.savefig(imgdir + 'numeric_results_{:06d}.png'.format(step))

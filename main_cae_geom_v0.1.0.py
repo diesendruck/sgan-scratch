@@ -254,7 +254,7 @@ with sv.managed_session() as sess:
     plt.savefig(imgdir + 'label_alignment.png')
     plt.close()
     
-    losses = [cae_loss_lbls_ce, c_loss_lbls_ce, cae_loss_ae, ae_loss_ae, cae_loss_oos_ce, c_loss_lbls_ce, cae_loss_oos_ae, ae_loss_oos_ae]
+    losses = [cae_loss_lbls_ce, c_loss_lbls_ce, cae_loss_ae, ae_loss_ae, cae_loss_oos_ce, c_loss_oos_ce, cae_loss_oos_ae, ae_loss_oos_ae]
     # losses = [cae_loss_ae, cae_loss_lbls_ce, cae_loss_combined, cae_loss_oos_mse, cae_loss_oos_ce]
     loss_values = sess.run(losses, feed_dict={lambda_ae: kappa})
     results = np.zeros([training_steps + 1, len(losses) + 1])
