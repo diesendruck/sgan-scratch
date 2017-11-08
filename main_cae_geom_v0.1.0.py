@@ -216,8 +216,8 @@ lbls_oos_tf = tf.constant(lbls_oos, dtype=tf.float32)
 cae_e_oos, _ = Encoder(x_oos, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope='CAE_Encoder')
 c_e_oos, _   = Encoder(x_oos, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope=  'C_Encoder')
 ae_e_oos, _  = Encoder(x_oos, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope= 'AE_Encoder')
-cae_lp_oos, _ = ffnn(cae_e_oos, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, var_scope='CAE_FFNN', reuse=True)
-c_lp_oos, _   = ffnn(  c_e_oos, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, var_scope=  'C_FFNN', reuse=True)
+cae_lp_oos, _ = ffnn(cae_e_oos, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=True, var_scope='CAE_FFNN', reuse=True)
+c_lp_oos, _   = ffnn(  c_e_oos, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=True, var_scope=  'C_FFNN', reuse=True)
 cae_aei_oos, _ = Decoder(cae_e_oos, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope='CAE_Decoder')
 ae_aei_oos, _  = Decoder( ae_e_oos, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope= 'AE_Decoder')
 
@@ -254,7 +254,7 @@ with sv.managed_session() as sess:
     plt.savefig(imgdir + 'label_alignment.png')
     plt.close()
     
-    losses = [cae_loss_lbls_ce, c_loss_lbls_ce, cae_loss_ae, ae_loss_ae, cae_loss_oos_ce, c_loss_oos_ce, cae_loss_oos_ae, ae_loss_oos_ae]
+    losses = [cae_loss_ae, ae_loss_ae, cae_loss_lbls_ce, c_loss_lbls_ce, cae_loss_oos_ae, ae_loss_oos_ae, cae_loss_oos_ce, c_loss_oos_ce]
     # losses = [cae_loss_ae, cae_loss_lbls_ce, cae_loss_combined, cae_loss_oos_mse, cae_loss_oos_ce]
     loss_values = sess.run(losses, feed_dict={lambda_ae: kappa})
     results = np.zeros([training_steps + 1, len(losses) + 1])
