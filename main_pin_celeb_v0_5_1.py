@@ -359,7 +359,7 @@ with sv.managed_session() as sess:
                 
                 plt.imshow(np.abs(normalized_embeddings.transpose().dot(normalized_embeddings)), interpolation='nearest', cmap=plt.get_cmap('Greys'))
                 plt.colorbar()
-                plt.title('Correlation of embeddings')
+                plt.title('Correlation of cae_embeddings')
                 plt.savefig(imgdir + 'emedding_correlation_{:06d}.png'.format(step))
                 plt.close()
                 

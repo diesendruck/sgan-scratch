@@ -21,14 +21,14 @@ import warnings
 #       and re-use otherse.
 #   Returns: a tf node of the output layer
 
-def ffnn(input, num_layers=3, width=3, output_dim=10, activations=[tf.tanh], activate_last_layer=True, scope="FFNN",
+def ffnn(input, num_layers=3, width=3, output_dim=10, activations=[tf.tanh], activate_last_layer=True, var_scope="FFNN",
          reuse=None):
     # Reading some implicit figures
     batch_size, input_dim = input._shape_as_list()
     
     # If variable re-use hasn't been specified, figure out if the scope is in use and should be re-used
     if reuse == None:
-        local_scope = tf.get_variable_scope().name + '/' + scope
+        local_scope = tf.get_variable_scope().name + '/' + var_scope
         scope_in_use = max([obj.name[:len(local_scope)] == local_scope for obj in tf.global_variables()] + [False])
         reuse = scope_in_use
         if scope_in_use == True:
@@ -50,7 +50,7 @@ def ffnn(input, num_layers=3, width=3, output_dim=10, activations=[tf.tanh], act
                 sum(layer_widths[num_layers - 1])) + ', explicit depth: ' + str(output_dim) + ')')
     
     # Set-up/retrieve the appropriate nodes within scope
-    with tf.variable_scope(scope, reuse=reuse) as vs:
+    with tf.variable_scope(var_scope, reuse=reuse) as vs:
         Ws = [tf.get_variable("W_" + str(l), shape=[input_dim if l == 0 else sum(layer_widths[l - 1]),
                                                     output_dim if l == num_layers - 1 else sum(layer_widths[l])],
                               dtype=input.dtype) for l in range(num_layers)]
