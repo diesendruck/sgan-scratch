@@ -17,7 +17,7 @@ import json
 shape_type = ['rectangles', 'polygons', 'stars'][0]
 
 # Supervisor params
-tag = 'cae_019'
+tag = 'cae_020'
 logdir = 'log/cae_geome_{}/{}/'.format(shape_type, tag)
 imgdir = 'img/cae_geome_{}/{}/'.format(shape_type, tag)
 
@@ -157,6 +157,8 @@ def CrossEntropy(scores, labels):
 # Load filenames and labels
 #######################################################################
 filenames = [data_dir + it for it in os.listdir(data_dir)]
+filenames_oos = [oos_dir + it for it in os.listdir(oos_dir)]
+
 ext = filenames[0][-3:]
 if ext == "jpg":
     tf_decode = tf.image.decode_jpeg
@@ -164,6 +166,7 @@ elif ext == "png":
     tf_decode = tf.image.decode_png
 
 labels, label_names, file_to_idx = load_labels(label_file, label_choices)
+
 
 #######################################################################
 # starting the managed session routine
@@ -209,28 +212,31 @@ init_op = tf.global_variables_initializer()
 # Extra output nodes for graphics
 #######################################################################
 # Run the model on a consistent selection of in-sample pictures
-img_oos, lbls_oos, fs_oos = load_practice_images(oos_dir, n_images=batch_size_x, labels=labels)
-x_oos = preprocess(img_oos, image_size=image_size)
-lbls_oos_tf = tf.constant(lbls_oos, dtype=tf.float32)
+def CAE_C_AE(input, input_labels):
+    cae_e, _ = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope='CAE_Encoder')
+    c_e, _   = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope=  'C_Encoder')
+    ae_e, _  = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope= 'AE_Encoder')
+    cae_lp, _ = ffnn(cae_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, var_scope='CAE_FFNN', reuse=True)
+    c_lp, _   = ffnn(  c_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, var_scope=  'C_FFNN', reuse=True)
+    cae_aei, _ = Decoder(cae_e, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope='CAE_Decoder')
+    ae_aei, _  = Decoder( ae_e, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope= 'AE_Decoder')
+    cae_loss_ae = tf.losses.mean_squared_error(input, cae_aei)
+    ae_loss_ae  = tf.losses.mean_squared_error(input,  ae_aei)
+    cae_loss_ce = CrossEntropy(cae_lp, input_labels)
+    c_loss_ce   = CrossEntropy(  c_lp, input_labels)
+    return cae_aei, ae_aei, cae_lp, c_lp, cae_loss_ae, ae_loss_ae, cae_loss_ce, c_loss_ce
 
-cae_e_oos, _ = Encoder(x_oos, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope='CAE_Encoder')
-c_e_oos, _   = Encoder(x_oos, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope=  'C_Encoder')
-ae_e_oos, _  = Encoder(x_oos, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope= 'AE_Encoder')
-cae_lp_oos, _ = ffnn(cae_e_oos, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, var_scope='CAE_FFNN', reuse=True)
-c_lp_oos, _   = ffnn(  c_e_oos, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, var_scope=  'C_FFNN', reuse=True)
-cae_aei_oos, _ = Decoder(cae_e_oos, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope='CAE_Decoder')
-ae_aei_oos, _  = Decoder( ae_e_oos, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope= 'AE_Decoder')
+pre_imgs_oosf, img_lbls_oosf, fs_oosf = load_practice_images(oos_dir, n_images=batch_size_x, labels=labels)
+imgs_oosf = preprocess(pre_imgs_oosf, image_size=image_size)
+img_lbls_oosf_tf = tf.constant(img_lbls_oosf, dtype=tf.float32)
+cae_aei_oosf, ae_aei_oosf, cae_lp_oosf, c_lp_oosf, cae_loss_ae_oosf, ae_loss_ae_oosf, cae_loss_ce_oosf, c_loss_ce_oosf = CAE_C_AE(imgs_oosf, img_lbls_oosf_tf)
+
+imgs_oosr, img_lbls_oosr, qr_f_oosr, qr_i_oosr = img_and_lbl_queue_setup(filenames, labels)
+cae_aei_oosr, ae_aei_oosr, cae_lp_oosr, c_lp_oosr, cae_loss_ae_oosr, ae_loss_ae_oosr, cae_loss_ce_oosr, c_loss_ce_oosr = CAE_C_AE(imgs_oosr, img_lbls_oosr)
 
 images_short = imgs[:8, :, :, :]
 cae_autoencoded_images_short = cae_autoencoded_images[:8, :, :, :]
 ae_autoencoded_images_short  =  ae_autoencoded_images[:8, :, :, :]
-
-cae_loss_oos_ae = tf.losses.mean_squared_error(x_oos, cae_aei_oos)
-ae_loss_oos_ae  = tf.losses.mean_squared_error(x_oos,  ae_aei_oos)
-cae_loss_oos_ce = CrossEntropy(cae_lp_oos, lbls_oos_tf)
-c_loss_oos_ce   = CrossEntropy(  c_lp_oos, lbls_oos_tf)
-cae_loss_oos_mse = tf.losses.mean_squared_error(lbls_oos, tf.tanh(cae_lp_oos))
-c_loss_oos_mse   = tf.losses.mean_squared_error(lbls_oos, tf.tanh(c_lp_oos))
 
 #######################################################################
 # Graph running
@@ -241,6 +247,8 @@ with sv.managed_session() as sess:
     coord = sv.coord
     enq_f_threads = qr_f.create_threads(sess, coord=coord, start=True)
     enq_i_threads = qr_i.create_threads(sess, coord=coord, start=True)
+    enq_f_oos_threads = qr_f_oosr.create_threads(sess, coord=coord, start=True)
+    enq_i_oos_threads = qr_i_oosr.create_threads(sess, coord=coord, start=True)
     sess.run(init_op)
     
     # Print some individuals just to test label alignment
@@ -254,14 +262,14 @@ with sv.managed_session() as sess:
     plt.savefig(imgdir + 'label_alignment.png')
     plt.close()
     
-    losses = [cae_loss_lbls_ce, c_loss_lbls_ce, cae_loss_ae, ae_loss_ae, cae_loss_oos_ce, c_loss_lbls_ce, cae_loss_oos_ae, ae_loss_oos_ae]
+    losses = [cae_loss_ae, ae_loss_ae, cae_loss_lbls_ce, c_loss_lbls_ce, cae_loss_ae_oosf, ae_loss_ae_oosf, cae_loss_ce_oosf, c_loss_ce_oosf, cae_loss_ae_oosr, ae_loss_ae_oosr, cae_loss_ce_oosr, c_loss_ce_oosr]
     # losses = [cae_loss_ae, cae_loss_lbls_ce, cae_loss_combined, cae_loss_oos_mse, cae_loss_oos_ce]
     loss_values = sess.run(losses, feed_dict={lambda_ae: kappa})
     results = np.zeros([training_steps + 1, len(losses) + 1])
     results[0, :] = loss_values + [kappa]
 
-    print '                              ______________In Sample_____________ |  ____________Out of Sample___________     Kappa Learning Rate'
-    print '                      Step    CAE_AE     AE_AE     CAE_C       C_C    CAE_AE     AE_AE     CAE_C       C_C     Kappa Learning Rate'
+    print '                              ______________In Sample_____________ |  _________Out of Sample (fixed)______ |  ________Out of Sample (random)______'
+    print '                      Step    CAE_AE     AE_AE     CAE_C       C_C    CAE_AE     AE_AE     CAE_C       C_C    CAE_AE     AE_AE     CAE_C       C_C     Kappa Learning Rate'
     for step in xrange(first_iteration, training_steps + 1):
         learning_rate_current = max(learning_rate_minimum, np.exp(np.log(learning_rate_initial) - step / learning_rate_decay))
         #sess.run([train_combined], feed_dict={lambda_ae: kappa, adam_learning_rate_ph: learning_rate_current})
@@ -292,8 +300,8 @@ with sv.managed_session() as sess:
                 plt.xticks(range(n_labels), label_names, rotation=90)
                 plt.savefig(imgdir + 'label_alignment_{:06d}.png'.format(step))
                 plt.close()
-                print '                              ______________In Sample_____________ |  ____________Out of Sample___________     Kappa Learning Rate'
-                print '                      Step    CAE_AE     AE_AE     CAE_C       C_C    CAE_AE     AE_AE     CAE_C       C_C     Kappa Learning Rate'
+                print '                              ______________In Sample_____________ |  _________Out of Sample (fixed)______ |  ________Out of Sample (random)______'
+                print '                      Step    CAE_AE     AE_AE     CAE_C       C_C    CAE_AE     AE_AE     CAE_C       C_C    CAE_AE     AE_AE     CAE_C       C_C     Kappa Learning Rate'
 
                 plt.figure(figsize=[8,8])
                 # results_names = ['Autoencoder Loss', 'Classifier Loss', 'Combined Loss', 'OOS Autoencoder Loss', 'OOS Classifier Loss', 'Kappa']
