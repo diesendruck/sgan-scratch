@@ -17,7 +17,7 @@ import json
 shape_type = ['rectangles', 'polygons', 'stars'][0]
 
 # Supervisor params
-tag = 'cae_020'
+tag = 'cae_021c'
 logdir = 'log/cae_geome_{}/{}/'.format(shape_type, tag)
 imgdir = 'img/cae_geome_{}/{}/'.format(shape_type, tag)
 
@@ -40,12 +40,14 @@ node_growth_per_layer = 8 # 4 # Linear rate of growth between CNN layers, hidden
 # Training params
 first_iteration = 1
 batch_size_x = 64 # 64  # Nubmer of samples in each training cycle, default 16
+batch_size_oosf = 64 # Fixed Out-of-Sample batch size
+batch_size_oosr = 64 # Random Out-of-Sample batch size
 adam_beta_1 = 0.5   # Anti-decay rate of first moment in ADAM optimizer
 adam_beta_2 = 0.999 # Anti-decay rate of second moment in ADAM optimizer
 learning_rate_initial = 0.0010 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
 learning_rate_decay = 2000.  # How many steps to reduce the learning rate by a factor of e
 learning_rate_minimum = 0.0000001 # 1e-4  # Floor for the learning rate
-training_steps = 25000  # Steps of the ADAM optimizers
+training_steps = 125000  # Steps of the ADAM optimizers
 print_interval = 10  # How often to print a line of output
 graph_interval = 100  # How often to output the graphics set
 
@@ -87,11 +89,11 @@ def load_labels(label_file, label_choices=None):
     return labels, label_names, file_to_idx
 
 
-def img_and_lbl_queue_setup(filenames, labels):
+def img_and_lbl_queue_setup(filenames, labels, batch_size=64):
     labels_tensor = tf.constant(labels, dtype=tf.float32)
     
     filenames_tensor = tf.constant(filenames)
-    fnq = tf.RandomShuffleQueue(capacity=150, min_after_dequeue=100, dtypes=tf.string)
+    fnq = tf.RandomShuffleQueue(capacity=batch_size*3, min_after_dequeue=batch_size+1, dtypes=tf.string)
     fnq_enq_op = fnq.enqueue_many(filenames_tensor)
     filename = fnq.dequeue()
     
@@ -102,12 +104,12 @@ def img_and_lbl_queue_setup(filenames, labels):
     image = tf.image.crop_to_bounding_box(image, 50, 25, 128, 128)
     image = tf.to_float(image)
     
-    image_index = [tf.cast(tf.string_to_number(tf.substr(flnm, len(data_dir), 6)) - 1, tf.int32)]
+    image_index = [tf.cast(tf.string_to_number(tf.substr(flnm, len(filenames[0]) - 10, 6)) - 1, tf.int32)]
     image_labels = tf.reshape(tf.gather(labels_tensor, indices=image_index, axis=0), [n_labels])
-    imq = tf.RandomShuffleQueue(capacity=60, min_after_dequeue=30, dtypes=[tf.float32, tf.float32],
+    imq = tf.RandomShuffleQueue(capacity=batch_size*3, min_after_dequeue=batch_size+1, dtypes=[tf.float32, tf.float32],
                                 shapes=[[128, 128, image_channels], [n_labels]])
     imq_enq_op = imq.enqueue([image, image_labels])
-    imgs, img_lbls = imq.dequeue_many(batch_size_x)
+    imgs, img_lbls = imq.dequeue_many(batch_size)
     imgs = tf.image.resize_nearest_neighbor(imgs, size=[image_size, image_size])
     imgs = tf.subtract(1., tf.divide(imgs, 255.5))
     qr_f = tf.train.QueueRunner(fnq, [fnq_enq_op] * 3)
@@ -178,7 +180,7 @@ tf.Graph().as_default()
 #######################################################################
 
 # The model for the real-data training samples
-imgs, img_lbls, qr_f, qr_i = img_and_lbl_queue_setup(filenames, labels)
+imgs, img_lbls, qr_f, qr_i = img_and_lbl_queue_setup(filenames, labels, batch_size=batch_size_x)
 cae_embeddings, cae_enc_vars = Encoder(imgs, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, var_scope='CAE_Encoder')
 c_embeddings, c_enc_vars     = Encoder(imgs, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, var_scope='C_Encoder')
 ae_embeddings, ae_enc_vars   = Encoder(imgs, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, var_scope='AE_Encoder')
@@ -211,13 +213,13 @@ init_op = tf.global_variables_initializer()
 #######################################################################
 # Extra output nodes for graphics
 #######################################################################
-# Run the model on a consistent selection of in-sample pictures
+# Run the model on a selection of pictures
 def CAE_C_AE(input, input_labels):
     cae_e, _ = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope='CAE_Encoder')
     c_e, _   = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope=  'C_Encoder')
     ae_e, _  = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope= 'AE_Encoder')
-    cae_lp, _ = ffnn(cae_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=True, var_scope='CAE_FFNN', reuse=True)
-    c_lp, _   = ffnn(  c_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=True, var_scope=  'C_FFNN', reuse=True)
+    cae_lp, _ = ffnn(cae_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], reuse=True, activate_last_layer=False, var_scope='CAE_FFNN')
+    c_lp, _   = ffnn(  c_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], reuse=True, activate_last_layer=False, var_scope=  'C_FFNN')
     cae_aei, _ = Decoder(cae_e, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope='CAE_Decoder')
     ae_aei, _  = Decoder( ae_e, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope= 'AE_Decoder')
     cae_loss_ae = tf.losses.mean_squared_error(input, cae_aei)
@@ -226,13 +228,14 @@ def CAE_C_AE(input, input_labels):
     c_loss_ce   = CrossEntropy(  c_lp, input_labels)
     return cae_aei, ae_aei, cae_lp, c_lp, cae_loss_ae, ae_loss_ae, cae_loss_ce, c_loss_ce
 
-pre_imgs_oosf, img_lbls_oosf, fs_oosf = load_practice_images(oos_dir, n_images=len(filenames_oos), labels=labels)
+pre_imgs_oosf, img_lbls_oosf, fs_oosf = load_practice_images(oos_dir, n_images=batch_size_oosf, labels=labels)
 imgs_oosf = preprocess(pre_imgs_oosf, image_size=image_size)
 img_lbls_oosf_tf = tf.constant(img_lbls_oosf, dtype=tf.float32)
 cae_aei_oosf, ae_aei_oosf, cae_lp_oosf, c_lp_oosf, cae_loss_ae_oosf, ae_loss_ae_oosf, cae_loss_ce_oosf, c_loss_ce_oosf = CAE_C_AE(imgs_oosf, img_lbls_oosf_tf)
 
-# imgs_oosr, img_lbls_oosr, qr_f_oosr, qr_i_oosr = img_and_lbl_queue_setup(filenames_oos, labels)
-cae_aei_oosr, ae_aei_oosr, cae_lp_oosr, c_lp_oosr, cae_loss_ae_oosr, ae_loss_ae_oosr, cae_loss_ce_oosr, c_loss_ce_oosr = CAE_C_AE(imgs_oosf, img_lbls_oosf_tf)
+imgs_oosr, img_lbls_oosr, qr_f_oosr, qr_i_oosr = img_and_lbl_queue_setup(filenames_oos, labels, batch_size=batch_size_oosr)
+cae_aei_oosr, ae_aei_oosr, cae_lp_oosr, c_lp_oosr, cae_loss_ae_oosr, ae_loss_ae_oosr, cae_loss_ce_oosr, c_loss_ce_oosr = CAE_C_AE(imgs_oosr, img_lbls_oosr)
+# cae_aei_oosr, ae_aei_oosr, cae_lp_oosr, c_lp_oosr, cae_loss_ae_oosr, ae_loss_ae_oosr, cae_loss_ce_oosr, c_loss_ce_oosr = CAE_C_AE(imgs_oosf, img_lbls_oosf_tf)
 
 images_short = imgs[:8, :, :, :]
 cae_autoencoded_images_short = cae_autoencoded_images[:8, :, :, :]
@@ -247,8 +250,8 @@ with sv.managed_session() as sess:
     coord = sv.coord
     enq_f_threads = qr_f.create_threads(sess, coord=coord, start=True)
     enq_i_threads = qr_i.create_threads(sess, coord=coord, start=True)
-    # enq_f_oosr_threads = qr_f_oosr.create_threads(sess, coord=coord, start=True)
-    # enq_i_oosr_threads = qr_i_oosr.create_threads(sess, coord=coord, start=True)
+    enq_f_oosr_threads = qr_f_oosr.create_threads(sess, coord=coord, start=True)
+    enq_i_oosr_threads = qr_i_oosr.create_threads(sess, coord=coord, start=True)
     sess.run(init_op)
     
     # Print some individuals just to test label alignment
@@ -305,7 +308,7 @@ with sv.managed_session() as sess:
 
                 plt.figure(figsize=[8,8])
                 # results_names = ['Autoencoder Loss', 'Classifier Loss', 'Combined Loss', 'OOS Autoencoder Loss', 'OOS Classifier Loss', 'Kappa']
-                results_names = ['C-AE AE Loss', 'AE Loss', 'C-AE C Loss', 'C Loss', 'C-AE AE OOS Loss', 'AE OOS Loss', 'C-AE C OOS Loss', 'C OOS Loss', 'A', 'B', 'C', 'D', 'Kappa']
+                results_names = ['C-AE AE Loss', 'AE Loss', 'C-AE C Loss', 'C Loss', 'C-AE AE OOS Loss', 'AE OOS Loss', 'C-AE C OOS Loss', 'C OOS Loss', 'C-AE AE Loss\nOOS Random', 'AE Loss\nOOS Random', 'C-AE C Loss\nOOS Random', 'C Loss\nOOS Random', 'Kappa']
                 for idx in range(results.shape[1]):
                     plt.subplot(4, 4, idx+1)
                     plt.plot(results[:step, idx])
