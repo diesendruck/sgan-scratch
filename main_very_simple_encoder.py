@@ -14,10 +14,10 @@ import json
 # Run setup
 #######################################################################
 # Geome param
-shape_type = ['rectangles', 'polygons', 'stars'][0]
+shape_type = ['rectangles', 'polygons', 'stars', 'simple'][3]
 
 # Supervisor params
-tag = 'cae_021c'
+tag = 'cae_simple_001f'
 logdir = 'log/cae_geome_{}/{}/'.format(shape_type, tag)
 imgdir = 'img/cae_geome_{}/{}/'.format(shape_type, tag)
 
@@ -29,13 +29,18 @@ oos_dir = '../data/geome/{}/splits/validate/'.format(shape_type) # Where to find
 data_format = 'NHWC'  # How the dimensions of the data are ordered (only NHWC is supported right now)
 scale_size = image_size  # See above
 label_file = '../data/geome/{}/list_attr_{}.txt'.format(shape_type, shape_type)
-label_choices = range(6) #range(40) # [4, 15, 20, 22, 24]  # Which labels to use (will print your choices once labels are loaded)
+label_choices = [0,2] #range(40) # [4, 15, 20, 22, 24]  # Which labels to use (will print your choices once labels are loaded)
 n_labels = len(label_choices)  # How many label choices you made
+
 # CNN params
-dimension_g = 4  # Dimension of the generators' inputs
-encoded_dimension = 32 # 64 # Dimension of the encoded layer, znum = 256 by default
+encoded_dimension = 2 # 64 # Dimension of the encoded layer, znum = 256 by default
 cnn_layers = 4  # How many layers in each convolutional layer
 node_growth_per_layer = 8 # 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
+
+# FFNN params
+ffnn_num_layers = 2
+ffnn_width = [[2]] * (ffnn_num_layers-1)+ [[n_labels]]
+ffnn_activations = [tf.tanh]
 
 # Training params
 first_iteration = 1
@@ -47,9 +52,9 @@ adam_beta_2 = 0.999 # Anti-decay rate of second moment in ADAM optimizer
 learning_rate_initial = 0.0010 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
 learning_rate_decay = 2000.  # How many steps to reduce the learning rate by a factor of e
 learning_rate_minimum = 0.0000001 # 1e-4  # Floor for the learning rate
-training_steps = 125000  # Steps of the ADAM optimizers
+training_steps = 10000  # Steps of the ADAM optimizers
 print_interval = 10  # How often to print a line of output
-graph_interval = 100  # How often to output the graphics set
+graph_interval = 500  # How often to output the graphics set
 
 # Penalty params
 PIN_penalty_mode = ['MSE', 'CE'][1]
@@ -184,8 +189,8 @@ imgs, img_lbls, qr_f, qr_i = img_and_lbl_queue_setup(filenames, labels, batch_si
 cae_embeddings, cae_enc_vars = Encoder(imgs, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, var_scope='CAE_Encoder')
 c_embeddings, c_enc_vars     = Encoder(imgs, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, var_scope='C_Encoder')
 ae_embeddings, ae_enc_vars   = Encoder(imgs, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, var_scope='AE_Encoder')
-cae_label_predictions, cae_ffnn_vars = ffnn(cae_embeddings, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, reuse=False, var_scope='CAE_FFNN')
-c_label_predictions, c_ffnn_vars     = ffnn(  c_embeddings, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], activate_last_layer=False, reuse=False, var_scope='C_FFNN')
+cae_label_predictions, cae_ffnn_vars = ffnn(cae_embeddings, num_layers=ffnn_num_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, reuse=False, var_scope='CAE_FFNN')
+c_label_predictions, c_ffnn_vars     = ffnn(  c_embeddings, num_layers=ffnn_num_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, reuse=False, var_scope='C_FFNN')
 cae_autoencoded_images, cae_dec_vars = Decoder(cae_embeddings, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, final_size=scale_size, var_scope='CAE_Decoder')
 ae_autoencoded_images, ae_dec_vars   = Decoder( ae_embeddings, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=False, final_size=scale_size, var_scope='AE_Decoder')
 
@@ -218,8 +223,8 @@ def CAE_C_AE(input, input_labels, reuse=True):
     cae_e, _ = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope='CAE_Encoder')
     c_e, _   = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope=  'C_Encoder')
     ae_e, _  = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope= 'AE_Encoder')
-    cae_lp, _ = ffnn(cae_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], reuse=True, activate_last_layer=False, var_scope='CAE_FFNN')
-    c_lp, _   = ffnn(  c_e, num_layers=5, width=[[2 * n_labels]] * 4 + [[n_labels]], output_dim=n_labels, activations=[tf.tanh], reuse=True, activate_last_layer=False, var_scope=  'C_FFNN')
+    cae_lp, _ = ffnn(cae_e, num_layers=ffnn_num_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, reuse=True, activate_last_layer=False, var_scope='CAE_FFNN')
+    c_lp, _   = ffnn(  c_e, num_layers=ffnn_num_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, reuse=True, activate_last_layer=False, var_scope=  'C_FFNN')
     cae_aei, _ = Decoder(cae_e, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope='CAE_Decoder')
     ae_aei, _  = Decoder( ae_e, input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size, var_scope= 'AE_Decoder')
     cae_loss_ae = tf.losses.mean_squared_error(input, cae_aei)

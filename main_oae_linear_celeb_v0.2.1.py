@@ -214,7 +214,7 @@ init_op = tf.global_variables_initializer()
 # Extra output nodes for graphics
 #######################################################################
 # Run the model on a selection of pictures
-def CAE_C_AE(input, input_labels, reuse=True):
+def CAE_C_AE(input, input_labels):
     cae_e, _ = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope='CAE_Encoder')
     c_e, _   = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope=  'C_Encoder')
     ae_e, _  = Encoder(input, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, var_scope= 'AE_Encoder')
