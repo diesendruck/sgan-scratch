@@ -31,7 +31,7 @@ from matplotlib import pyplot as plt
 #######################################################################
 
 # Supervisor params
-tag = 'pin_giant_4'
+tag = 'pin_celeb_v061a'
 logdir = 'log/pin_celeb/{}/'.format(tag)
 imgdir = 'img/pin_celeb/{}/'.format(tag)
 
@@ -52,14 +52,14 @@ cnn_layers = 4  # How many layers in each convolutional layer
 node_growth_per_layer = 32 # 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
 
 # Training params
-first_iteration = 29101
+first_iteration = 1
 batch_size_x = 64 # 64  # Nubmer of samples in each training cycle, default 16
 batch_size_g = 64 # 64  # Number of generated samples, default 16
 adam_beta_1 = 0.5   # Anti-decay rate of first moment in ADAM optimizer
 adam_beta_2 = 0.999 # Anti-decay rate of second moment in ADAM optimizer
-learning_rate_initial = 0.00010 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
-learning_rate_decay = 25000.  # How many steps to reduce the learning rate by a factor of e
-learning_rate_minimum = 0.0000001 # 1e-4  # Floor for the learning rate
+learning_rate_initial = 1e-5 # 0.00010 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
+learning_rate_decay = 2500.  # How many steps to reduce the learning rate by a factor of e
+learning_rate_minimum = 1e-8 # 0.0000001 # 1e-4  # Floor for the learning rate
 training_steps = 125000  # Steps of the ADAM optimizers
 print_interval = 10  # How often to print a line of output
 graph_interval = 100  # How often to output the graphics set
@@ -170,12 +170,15 @@ def pin_cnn(images, true_labels=None, counter_labels = None, n_labels=None, reus
     autoencoded, dec_vars = Decoder(tf.concat([latent_embeddings, fixed_labels], 1), input_channel=image_channels, repeat_num=cnn_layers,
                                hidden_num=node_growth_per_layer, data_format=data_format, reuse=reuse,
                                final_size=scale_size)
-    reencoded_embeddings = Encoder(autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer,
+    autoencoded = tf.maximum(tf.minimum(autoencoded, 1.), 0.)
+    reencoded_embeddings, _ = Encoder(autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer,
                           data_format=data_format, reuse=True)
     reencoded_latent_embeddings = reencoded_embeddings[:, n_labels:]
     reencoded_scores = reencoded_embeddings[:, :n_labels]
     reencoded_estimated_labels = tf.tanh(reencoded_embeddings[:, :n_labels])
-    output = {'scores':scores, 
+    output = {'images':images,
+              'true_labels':true_labels,
+              'scores':scores, 
               'latent_embeddings':latent_embeddings, 
               'estimated_labels':estimated_labels, 
               'fixed_labels':fixed_labels, 
@@ -200,7 +203,8 @@ def pin_cnn(images, true_labels=None, counter_labels = None, n_labels=None, reus
     else:
         counter_fixed_labels = estimated_labels * (1 - tf.abs(counter_labels)) + counter_labels
         counter_autoencoded, _ = Decoder(tf.concat([latent_embeddings, counter_fixed_labels], 1), input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size)
-        counter_reencoded_embeddings = Encoder(counter_autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
+        counter_autoencoded = tf.maximum(tf.minimum(counter_autoencoded, 1.), 0.)
+        counter_reencoded_embeddings, _ = Encoder(counter_autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
         counter_reencoded_latent_embeddings = counter_reencoded_embeddings[:, n_labels:]
         counter_reencoded_scores = counter_reencoded_embeddings[:, :n_labels]
         counter_reencoded_estimated_labels = tf.tanh(counter_reencoded_embeddings[:, :n_labels])
@@ -251,12 +255,13 @@ for n in range(n_labels):
     temp[n, n % n_labels] = -1.
 counter_label_modifier = tf.constant(temp, dtype=img_lbls.dtype)
 counter_labels = img_lbls * counter_label_modifier
-trn = pin_cnn(input=x_trn, true_labels=img_lbls if lambda_pin_value > 0. else None, counter_labels=counter_labels, n_labels=n_labels, reuse=False, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+trn = pin_cnn(images=x_trn, true_labels=img_lbls if lambda_pin_value > 0. else None, counter_labels=counter_labels, n_labels=n_labels, reuse=False, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
 
 # Define the objective from the training losses
 loss_names = ['ae', 'label', 're_embed', 're_label', 'counter_similarity', 'counter_re_embed', 'counter_re_label']
 l = trn['losses']
-objective = l['ae'] + l['label'] + l['re_embed'] + l['re_label'] - l['counter_similarity'] + l['counter_re_embed'] + l['counter_re_label']
+# objective = l['ae'] + l['label'] + l['re_embed'] + l['re_label'] - l['counter_similarity'] + l['counter_re_embed'] + l['counter_re_label']
+objective = 1000. * l['ae'] + 100 * l['label'] + l['re_embed'] + l['re_label'] + l['counter_re_embed'] + l['counter_re_label']
 # need to think hard about how to weight these...
 
 # Set up the optimizers
@@ -272,18 +277,18 @@ init_op = tf.global_variables_initializer()
 # Run the model on a consistent selection of in-sample pictures
 img_ins, lbls_ins, fs_ins = load_practice_images(data_dir, n_images=8, labels=labels)
 x_ins = preprocess(img_ins, image_size=image_size)
-ins, = pin_cnn(input=x_ins, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+ins = pin_cnn(images=x_ins, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
 
 # Run the model on a consistent selection of in-sample pictures
 n_big = 1024
 img_big, lbls_big, fs_big = load_practice_images(data_dir, n_images=n_big, labels=labels)
 x_big = preprocess(img_big, image_size=image_size)
-big = pin_cnn(input=x_big, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+big = pin_cnn(images=x_big, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
 
 # Run the model on a consistent selection of out-of-sample pictures
 img_oos, lbls_oos, fs_oos = load_practice_images(oos_dir, n_images=8, labels=labels)
 x_oos = preprocess(img_oos, image_size=image_size)
-oos = pin_cnn(input=x_oos, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+oos = pin_cnn(images=x_oos, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
 
 # Run the model on a consistent selection of out-of-sample pictures
 x_demo = preprocess(img_ins[:1, :, :, :], image_size=image_size)
@@ -293,9 +298,9 @@ for n in range(n_labels):
     modifier[n + 1, n] *= -1.
 
 lbls_demo = tf.tile(tf.cast(lbls_ins[:1, :], tf.float32), [n_labels + 1, 1]) * modifier
-demo = pin_cnn(input=x_demo, lbls=lbls_demo, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+demo = pin_cnn(images=x_demo, true_labels=lbls_demo, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
 
-x_trn_short = x_trn + trn['images'][:8, :, :, :]
+x_trn_short = trn['images'][:8, :, :, :]
 x_out_trn_short = trn['autoencoded'][:8, :, :, :]
 
 #######################################################################
@@ -325,7 +330,7 @@ with sv.managed_session() as sess:
     plt.savefig(imgdir + 'label_alignment.png')
     plt.close()
     
-    results = np.zeros([training_steps + 1, 5])
+    results = np.zeros([training_steps + 1, len(loss_names) + 1])
     eval_losses = sess.run(trn['losses'], feed_dict={})
     results[0, :] = [eval_losses[key] for key in loss_names] + [kappa]
     
@@ -338,13 +343,13 @@ with sv.managed_session() as sess:
         eval_losses = sess.run(trn['losses'], feed_dict={})
         # kappa = max(kappa_range[0], min(kappa_range[1], kappa + kappa_learning_rate * (gamma_target * lx - lg)))
         # kappa = kappa + kappa_learning_rate * (gamma_target * lx - lg)
-        results[step, :] = eval_losses + [kappa]
+        results[step, :] = [eval_losses[key] for key in loss_names] + [kappa]
         
         print_cycle = (step % print_interval == 0) or (step == 1)
         if print_cycle:
             image_print_cycle = (step % graph_interval == 0) or (step == 1)
             
-            print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
+            print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(eval_losses[key]) for key in loss_names]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
             if image_print_cycle:
                 output = sess.run([trn['images'], trn['images'], ins['images'], oos['images'], demo['images'],
                                    trn['autoencoded'], trn['counter_autoencoded'], ins['autoencoded'], oos['autoencoded'], demo['autoencoded']])
@@ -388,7 +393,7 @@ with sv.managed_session() as sess:
                 print l.mean(0), np.tanh(h[:, :n_labels]).mean(0)
                 print 'Date                  Step    Loss_X    Loss_G    Loss_Z  Loss_PIN     kappa learning_rate'
                 
-                e = sess.run(big['estimated_labels'])
+                e = sess.run(big['embeddings'])
                 m = e.mean(0)
                 v = e.var(0)
                 # M = np.linalg.inv(e.transpose().dot(e)).dot(e.transpose()).dot(l)
