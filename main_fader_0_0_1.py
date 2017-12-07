@@ -32,7 +32,7 @@ from matplotlib import pyplot as plt
 #######################################################################
 
 # Supervisor params
-tag = 'pin_giant_4'
+tag = 'fader_001a'
 logdir = 'log/pin_celeb/{}/'.format(tag)
 imgdir = 'img/pin_celeb/{}/'.format(tag)
 
@@ -231,6 +231,7 @@ def fader_cnn(images, true_labels=None, counter_labels = None, n_labels=None, re
     estimated_labels = tf.tanh(scores)
     
     autoencoded, dec_vars = Decoder(tf.concat([embeddings, estimated_labels], 1), input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=reuse, final_size=scale_size)
+    autoencoded = tf.maximum(tf.minimum(autoencoded, 1.), 0.)
     reencoded_embeddings, _ = Encoder(autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
     reencoded_latent_embeddings = reencoded_embeddings
     reencoded_scores, _ = ffnn(embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
@@ -372,6 +373,7 @@ x_out_trn_short = trn['autoencoded'][:8, :, :, :]
 
 sv = tf.train.Supervisor(logdir=logdir)
 
+losses = [trn['losses'][loss] for loss in loss_names]
 with sv.managed_session() as sess:
     # sess = tf.Session()
     # coord = tf.train.Coordinator()
@@ -393,34 +395,39 @@ with sv.managed_session() as sess:
     plt.savefig(imgdir + 'label_alignment.png')
     plt.close()
     
-    results = np.zeros([training_steps + 1, 5])
-    eval_losses = sess.run(trn['losses'], feed_dict={})
-    results[0, :] = [eval_losses[key] for key in loss_names] + [kappa]
+    results = np.zeros([training_steps + 1, len(trn['losses']) + 1])
+    eval_losses = sess.run(losses, feed_dict={})
+    results[0, :] = eval_losses + [kappa]
     
     for step in xrange(first_iteration, training_steps + 1):
         learning_rate_current = max(learning_rate_minimum,
                                     np.exp(np.log(learning_rate_initial) - step / learning_rate_decay))
         print_cycle = (step % print_interval == 0) or (step == 1)
         if not print_cycle:
-            _, _, eval_losses = sess.run([ae_trainer, disc_trainer, trn['losses']], feed_dict={})
+            _, _, eval_losses = sess.run([ae_trainer, disc_trainer, losses], feed_dict={adam_learning_rate_ph: learning_rate_current})
             results[step, :] = eval_losses + [kappa]
         else:
             image_print_cycle = (step % graph_interval == 0) or (step == 1)
             if not image_print_cycle:
-                _, _, eval_losses = sess.run([ae_trainer, disc_trainer, trn['losses']], feed_dict={})
+                _, _, eval_losses = sess.run([ae_trainer, disc_trainer, losses], feed_dict={adam_learning_rate_ph: learning_rate_current})
                 results[step, :] = eval_losses + [kappa]
                 print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
             if image_print_cycle:
-                _, _, eval_losses, output, i, l, h, e = sess.run([ae_trainer, disc_trainer, trn['losses'], 
+                _, _, eval_losses, output, i, l, h, e = sess.run([ae_trainer, disc_trainer, losses, 
                                                                   [trn['images'], trn['images'], ins['images'], oos['images'], demo['images'],
                                                                    trn['autoencoded'], trn['counter_autoencoded'], ins['autoencoded'], oos['autoencoded'], demo['autoencoded']], 
                                                                   x_trn_short, img_lbls, trn['estimated_labels'],
                                                                   big['estimated_labels']],
-                                                                 feed_dict={})
+                                                                 feed_dict={adam_learning_rate_ph: learning_rate_current})
+                
                 results[step, :] = eval_losses + [kappa]
+                
                 print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
                 print '  ', ', '.join(['{:6.2f}'.format(item.mean()) for item in output])
                 tmp = output[-1] + 0.
+                for idx in range(len(output)):
+                    print idx, output[idx].min(), output[idx].max()
+                
                 for idx in reversed(range(6)):
                     tmp[idx, :, :, :] -= tmp[0, :, :, :]
                 tmp = np.abs(tmp.reshape([-1, image_size, 3]))
@@ -435,11 +442,11 @@ with sv.managed_session() as sess:
                     plt.imshow(1. - np.append(output[image_idx], output[image_idx + 5], 1), interpolation='nearest')
                     plt.title(plot_names[image_idx])
                     if image_idx == 4:
-                        plt.yticks([image_size * (n + .5) for n in range(n_labels + 1)], ['None'] + label_names,
-                                   rotation=90)
+                        plt.yticks([image_size * (n + .5) for n in range(n_labels + 1)], ['None'] + label_names, rotation=90)
                 plt.subplot(1, 6, 6)
-                plt.imshow(1. - tmp / tmp.max(), interpolation='nearest')
-                plt.title('Diff from base')
+                # plt.imshow(1. - tmp / (tmp.max() + 1e-8), interpolation='nearest')
+                # print tmp.min(), tmp.max()
+                # plt.title('Diff from base')
                 plt.savefig(imgdir + 'sample_images_{:06d}.png'.format(step))
                 plt.close()
                 
