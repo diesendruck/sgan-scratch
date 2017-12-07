@@ -344,7 +344,7 @@ with sv.managed_session() as sess:
         if print_cycle:
             image_print_cycle = (step % graph_interval == 0) or (step == 1)
             
-            print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
+            print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
             if image_print_cycle:
                 output = sess.run([trn['images'], trn['images'], ins['images'], oos['images'], demo['images'],
                                    trn['autoencoded'], trn['counter_autoencoded'], ins['autoencoded'], oos['autoencoded'], demo['autoencoded']])
