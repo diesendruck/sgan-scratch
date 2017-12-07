@@ -20,6 +20,7 @@ from cnn_began import Encoder, Decoder
 import tensorflow as tf
 import numpy as np
 import os, sys
+from ffnn import ffnn
 from PIL import Image
 from time import *
 import matplotlib
@@ -50,6 +51,9 @@ dimension_g = 16  # Dimension of the generators' inputs
 encoded_dimension = 128 # 64 # Dimension of the encoded layer, znum = 256 by default
 cnn_layers = 4  # How many layers in each convolutional layer
 node_growth_per_layer = 32 # 4 # Linear rate of growth between CNN layers, hidden_num = 128 default
+ffnn_layers=5
+ffnn_width=n_labels*2
+ffnn_activations=[tf.tanh]
 
 # Training params
 first_iteration = 29101
@@ -218,6 +222,65 @@ def pin_cnn(images, true_labels=None, counter_labels = None, n_labels=None, reus
     return output
 
 
+def fader_cnn(images, true_labels=None, counter_labels = None, n_labels=None, reuse=False, encoded_dimension=16, cnn_layers=4,
+            node_growth_per_layer=4, data_format='NHWC', image_channels=3, ffnn_layers=3, ffnn_width=n_labels, ffnn_activations=[tf.tanh]):
+    embeddings, enc_vars = Encoder(images, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer,
+                          data_format=data_format, reuse=reuse)
+    latent_embeddings = embeddings
+    scores, ffnn_vars = ffnn(embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=reuse)
+    estimated_labels = tf.tanh(scores)
+    
+    autoencoded, dec_vars = Decoder(tf.concat([embeddings, estimated_labels], 1), input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=reuse, final_size=scale_size)
+    reencoded_embeddings = Encoder(autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
+    reencoded_latent_embeddings = reencoded_embeddings
+    reencoded_scores = ffnn(embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
+    reencoded_estimated_labels = tf.tanh(reencoded_scores)
+    if true_labels is not None:
+        fixed_labels = estimated_labels * (1 - tf.abs(true_labels)) + true_labels
+    else:
+        fixed_labels = estimated_labels
+    output = {'latent_embeddings': latent_embeddings,
+              'scores': scores, 
+              'estimated_labels': estimated_labels, 
+              'fixed_labels': fixed_labels,
+              'autoencoded': autoencoded, 
+              'reencoded_scores': reencoded_scores, 
+              'reencoded_latent_embeddings': reencoded_latent_embeddings, 
+              'reencoded_estimated_labels': reencoded_estimated_labels,
+              'enc_vars': enc_vars,
+              'dec_vars': dec_vars,
+              'ffnn_vars': ffnn_vars,
+              'images': images,
+              'losses': {'ae': tf.losses.mean_squared_error(images, autoencoded),
+                        'label': CrossEntropy(scores, true_labels) if true_labels is not None else tf.zeros_like(scores),
+                        're_embed': tf.losses.mean_squared_error(latent_embeddings, reencoded_latent_embeddings),
+                        're_label': CrossEntropy(reencoded_scores, fixed_labels)
+                        }
+              }
+    if true_labels is not None:
+        output['true_labels'] = true_labels
+    
+    if counter_labels is None:
+        counter_output = 'Nothing here'
+    else:
+        counter_fixed_labels = estimated_labels * (1 - tf.abs(counter_labels)) + counter_labels
+        counter_autoencoded, _ = Decoder(tf.concat([latent_embeddings, counter_fixed_labels], 1), input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size)
+        counter_reencoded_embeddings = Encoder(counter_autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
+        counter_reencoded_latent_embeddings = counter_reencoded_embeddings
+        counter_reencoded_scores = ffnn(counter_reencoded_embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
+        counter_reencoded_estimated_labels = tf.tanh(counter_reencoded_scores)
+        output.update({'counter_labels': counter_labels, 
+                       'counter_fixed_labels':counter_fixed_labels, 
+                       'counter_autoencoded':counter_autoencoded, 
+                       'counter_reencoded_scores':counter_reencoded_scores, 
+                       'counter_reencoded_latent_embeddings':counter_reencoded_latent_embeddings, 
+                       'counter_reencoded_estimated_labels':counter_reencoded_estimated_labels
+                       })
+        output['losses'].update({'counter_similarity': tf.losses.mean_squared_error(autoencoded, counter_autoencoded),
+                                 'counter_re_embed': tf.losses.mean_squared_error(latent_embeddings, counter_reencoded_latent_embeddings),
+                                 'counter_re_label': CrossEntropy(counter_reencoded_scores, counter_fixed_labels)
+                                })
+    return output
 
 
 #######################################################################
@@ -244,24 +307,29 @@ tf.Graph().as_default()
 # The model for the real-data training samples
 imgs, img_lbls, qr_f, qr_i = img_and_lbl_queue_setup(filenames, labels)
 x_trn = imgs
+
 # # .375 = flipp 1/5 of the bits
 # counter_labels = img_lbls * (tf.round(tf.random_uniform(img_lbls.shape, minval=.375, maxval=1.)) * 2. - 1.)
+
 temp = np.ones([batch_size_x, n_labels])
 for n in range(n_labels):
     temp[n, n % n_labels] = -1.
 counter_label_modifier = tf.constant(temp, dtype=img_lbls.dtype)
 counter_labels = img_lbls * counter_label_modifier
-trn = pin_cnn(input=x_trn, true_labels=img_lbls if lambda_pin_value > 0. else None, counter_labels=counter_labels, n_labels=n_labels, reuse=False, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+trn = fader_cnn(input=x_trn, true_labels=img_lbls if lambda_pin_value > 0. else None, counter_labels=counter_labels, n_labels=n_labels, reuse=False, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
 
 # Define the objective from the training losses
 loss_names = ['ae', 'label', 're_embed', 're_label', 'counter_similarity', 'counter_re_embed', 'counter_re_label']
 l = trn['losses']
-objective = l['ae'] + l['label'] + l['re_embed'] + l['re_label'] - l['counter_similarity'] + l['counter_re_embed'] + l['counter_re_label']
+ae_obj = l['ae'] - l['label']
+disc_obj = l['label']
+
 # need to think hard about how to weight these...
 
 # Set up the optimizers
 adam_learning_rate_ph = tf.placeholder(dtype=tf.float32, shape=[])
-trainer = tf.train.AdamOptimizer(learning_rate=adam_learning_rate_ph).minimize(objective, var_list=trn['enc_vars'] + trn['dec_vars'])
+ae_trainer = tf.train.AdamOptimizer(learning_rate=adam_learning_rate_ph).minimize(ae_obj, var_list=trn['enc_vars'] + trn['dec_vars'])
+disc_trainer = tf.train.AdamOptimizer(learning_rate=adam_learning_rate_ph).minimize(disc_obj, var_list=trn['ffnn_vars'])
 
 # Set up the initializer (NOTE: Keep this after the optimizers, which have parameters to be initialized.)
 init_op = tf.global_variables_initializer()
@@ -272,18 +340,18 @@ init_op = tf.global_variables_initializer()
 # Run the model on a consistent selection of in-sample pictures
 img_ins, lbls_ins, fs_ins = load_practice_images(data_dir, n_images=8, labels=labels)
 x_ins = preprocess(img_ins, image_size=image_size)
-ins, = pin_cnn(input=x_ins, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+ins, = fader_cnn(input=x_ins, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
 
 # Run the model on a consistent selection of in-sample pictures
 n_big = 1024
 img_big, lbls_big, fs_big = load_practice_images(data_dir, n_images=n_big, labels=labels)
 x_big = preprocess(img_big, image_size=image_size)
-big = pin_cnn(input=x_big, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+big = fader_cnn(input=x_big, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
 
 # Run the model on a consistent selection of out-of-sample pictures
 img_oos, lbls_oos, fs_oos = load_practice_images(oos_dir, n_images=8, labels=labels)
 x_oos = preprocess(img_oos, image_size=image_size)
-oos = pin_cnn(input=x_oos, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+oos = fader_cnn(input=x_oos, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
 
 # Run the model on a consistent selection of out-of-sample pictures
 x_demo = preprocess(img_ins[:1, :, :, :], image_size=image_size)
@@ -293,7 +361,7 @@ for n in range(n_labels):
     modifier[n + 1, n] *= -1.
 
 lbls_demo = tf.tile(tf.cast(lbls_ins[:1, :], tf.float32), [n_labels + 1, 1]) * modifier
-demo = pin_cnn(input=x_demo, lbls=lbls_demo, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels)
+demo = fader_cnn(input=x_demo, lbls=lbls_demo, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
 
 x_trn_short = x_trn + trn['images'][:8, :, :, :]
 x_out_trn_short = trn['autoencoded'][:8, :, :, :]
@@ -332,22 +400,25 @@ with sv.managed_session() as sess:
     for step in xrange(first_iteration, training_steps + 1):
         learning_rate_current = max(learning_rate_minimum,
                                     np.exp(np.log(learning_rate_initial) - step / learning_rate_decay))
-        
-        sess.run([trainer], feed_dict={adam_learning_rate_ph: learning_rate_current})
-        
-        eval_losses = sess.run(trn['losses'], feed_dict={})
-        # kappa = max(kappa_range[0], min(kappa_range[1], kappa + kappa_learning_rate * (gamma_target * lx - lg)))
-        # kappa = kappa + kappa_learning_rate * (gamma_target * lx - lg)
-        results[step, :] = eval_losses + [kappa]
-        
         print_cycle = (step % print_interval == 0) or (step == 1)
-        if print_cycle:
+        if not print_cycle:
+            _, _, eval_losses = sess.run([ae_trainer, disc_trainer, trn['losses']], feed_dict={})
+            results[step, :] = eval_losses + [kappa]
+        else:
             image_print_cycle = (step % graph_interval == 0) or (step == 1)
-            
-            print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
+            if not image_print_cycle:
+                _, _, eval_losses = sess.run([ae_trainer, disc_trainer, trn['losses']], feed_dict={})
+                results[step, :] = eval_losses + [kappa]
+                print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
             if image_print_cycle:
-                output = sess.run([trn['images'], trn['images'], ins['images'], oos['images'], demo['images'],
-                                   trn['autoencoded'], trn['counter_autoencoded'], ins['autoencoded'], oos['autoencoded'], demo['autoencoded']])
+                _, _, eval_losses, output, i, l, h, e = sess.run([ae_trainer, disc_trainer, trn['losses'], 
+                                                                  [trn['images'], trn['images'], ins['images'], oos['images'], demo['images'],
+                                                                   trn['autoencoded'], trn['counter_autoencoded'], ins['autoencoded'], oos['autoencoded'], demo['autoencoded']], 
+                                                                  x_trn_short, img_lbls, trn['estimated_labels'],
+                                                                  big['estimated_labels']],
+                                                                 feed_dict={})
+                results[step, :] = eval_losses + [kappa]
+                print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
                 print '  ', ', '.join(['{:6.2f}'.format(item.mean()) for item in output])
                 tmp = output[-1] + 0.
                 for idx in reversed(range(6)):
@@ -373,7 +444,6 @@ with sv.managed_session() as sess:
                 plt.close()
                 
                 # Print some individuals just to test label alignment
-                i, l, h = sess.run([x_trn_short, img_lbls, trn['estimated_labels']])
                 plt.figure(figsize=[8, 8])
                 plt.subplot(1, 3, 1)
                 plt.imshow(1. - i.reshape([-1, image_size, 3]), interpolation='nearest')
@@ -388,7 +458,6 @@ with sv.managed_session() as sess:
                 print l.mean(0), np.tanh(h[:, :n_labels]).mean(0)
                 print 'Date                  Step    Loss_X    Loss_G    Loss_Z  Loss_PIN     kappa learning_rate'
                 
-                e = sess.run(big['estimated_labels'])
                 m = e.mean(0)
                 v = e.var(0)
                 # M = np.linalg.inv(e.transpose().dot(e)).dot(e.transpose()).dot(l)
