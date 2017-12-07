@@ -31,7 +31,11 @@ from matplotlib import pyplot as plt
 #######################################################################
 
 # Supervisor params
+<<<<<<< Updated upstream
 tag = 'pin_giant_4'
+=======
+tag = 'pin_celeb_v062a'
+>>>>>>> Stashed changes
 logdir = 'log/pin_celeb/{}/'.format(tag)
 imgdir = 'img/pin_celeb/{}/'.format(tag)
 
@@ -57,10 +61,17 @@ batch_size_x = 64 # 64  # Nubmer of samples in each training cycle, default 16
 batch_size_g = 64 # 64  # Number of generated samples, default 16
 adam_beta_1 = 0.5   # Anti-decay rate of first moment in ADAM optimizer
 adam_beta_2 = 0.999 # Anti-decay rate of second moment in ADAM optimizer
+<<<<<<< Updated upstream
 learning_rate_initial = 0.00010 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
 learning_rate_decay = 25000.  # How many steps to reduce the learning rate by a factor of e
 learning_rate_minimum = 0.0000001 # 1e-4  # Floor for the learning rate
 training_steps = 125000  # Steps of the ADAM optimizers
+=======
+learning_rate_initial = 2e-5 # 0.00010 # 1e-4 # Base learning rate for the ADAM optimizers; may be decreased over time, default 0.00008
+learning_rate_decay = 2500.  # How many steps to reduce the learning rate by a factor of e
+learning_rate_minimum = 1e-8 # 0.0000001 # 1e-4  # Floor for the learning rate
+training_steps = 50000  # Steps of the ADAM optimizers
+>>>>>>> Stashed changes
 print_interval = 10  # How often to print a line of output
 graph_interval = 100  # How often to output the graphics set
 
@@ -175,18 +186,25 @@ def pin_cnn(images, true_labels=None, counter_labels = None, n_labels=None, reus
     reencoded_latent_embeddings = reencoded_embeddings[:, n_labels:]
     reencoded_scores = reencoded_embeddings[:, :n_labels]
     reencoded_estimated_labels = tf.tanh(reencoded_embeddings[:, :n_labels])
+<<<<<<< Updated upstream
     output = {'scores':scores, 
+=======
+    output = {'images':images,
+              'true_labels':true_labels,
+              'embeddings':embeddings,
+              'scores':scores, 
+>>>>>>> Stashed changes
               'latent_embeddings':latent_embeddings, 
               'estimated_labels':estimated_labels, 
               'fixed_labels':fixed_labels, 
-              'autoencoded':autoencoded, 
+              'autoencoded':autoencoded,
+              'reencoded_embeddings':reencoded_embeddings,
               'reencoded_scores':reencoded_scores, 
               'reencoded_latent_embeddings':reencoded_latent_embeddings, 
               'reencoded_estimated_labels':reencoded_estimated_labels,
               'enc_vars':enc_vars,
               'dec_vars':dec_vars,
-              'losses': {'images': images,
-                        'ae': tf.losses.mean_squared_error(images, autoencoded),
+              'losses': {'ae': tf.losses.mean_squared_error(images, autoencoded),
                         'label': tf.zeros_like(scores) if true_labels is None else CrossEntropy(scores, true_labels),
                         're_embed': tf.losses.mean_squared_error(latent_embeddings, reencoded_latent_embeddings),
                         're_label': CrossEntropy(reencoded_scores, fixed_labels)
