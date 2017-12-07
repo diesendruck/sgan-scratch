@@ -231,9 +231,9 @@ def fader_cnn(images, true_labels=None, counter_labels = None, n_labels=None, re
     estimated_labels = tf.tanh(scores)
     
     autoencoded, dec_vars = Decoder(tf.concat([embeddings, estimated_labels], 1), input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=reuse, final_size=scale_size)
-    reencoded_embeddings = Encoder(autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
+    reencoded_embeddings, _ = Encoder(autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
     reencoded_latent_embeddings = reencoded_embeddings
-    reencoded_scores = ffnn(embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
+    reencoded_scores, _ = ffnn(embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
     reencoded_estimated_labels = tf.tanh(reencoded_scores)
     if true_labels is not None:
         fixed_labels = estimated_labels * (1 - tf.abs(true_labels)) + true_labels
@@ -265,9 +265,9 @@ def fader_cnn(images, true_labels=None, counter_labels = None, n_labels=None, re
     else:
         counter_fixed_labels = estimated_labels * (1 - tf.abs(counter_labels)) + counter_labels
         counter_autoencoded, _ = Decoder(tf.concat([latent_embeddings, counter_fixed_labels], 1), input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size)
-        counter_reencoded_embeddings = Encoder(counter_autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
+        counter_reencoded_embeddings, _ = Encoder(counter_autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
         counter_reencoded_latent_embeddings = counter_reencoded_embeddings
-        counter_reencoded_scores = ffnn(counter_reencoded_embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
+        counter_reencoded_scores, _ = ffnn(counter_reencoded_embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
         counter_reencoded_estimated_labels = tf.tanh(counter_reencoded_scores)
         output.update({'counter_labels': counter_labels, 
                        'counter_fixed_labels':counter_fixed_labels, 
@@ -340,7 +340,7 @@ init_op = tf.global_variables_initializer()
 # Run the model on a consistent selection of in-sample pictures
 img_ins, lbls_ins, fs_ins = load_practice_images(data_dir, n_images=8, labels=labels)
 x_ins = preprocess(img_ins, image_size=image_size)
-ins, = fader_cnn( x_ins, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
+ins = fader_cnn( x_ins, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
 
 # Run the model on a consistent selection of in-sample pictures
 n_big = 1024
@@ -361,9 +361,9 @@ for n in range(n_labels):
     modifier[n + 1, n] *= -1.
 
 lbls_demo = tf.tile(tf.cast(lbls_ins[:1, :], tf.float32), [n_labels + 1, 1]) * modifier
-demo = fader_cnn( x_demo, lbls=lbls_demo, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
+demo = fader_cnn( x_demo, true_labels=lbls_demo, n_labels=n_labels, reuse=True, encoded_dimension=encoded_dimension, cnn_layers=cnn_layers, node_growth_per_layer=node_growth_per_layer, data_format=data_format, image_channels=image_channels, ffnn_layers=ffnn_layers, ffnn_width=ffnn_width, ffnn_activations=ffnn_activations)
 
-x_trn_short = x_trn + trn['images'][:8, :, :, :]
+x_trn_short = trn['images'][:8, :, :, :]
 x_out_trn_short = trn['autoencoded'][:8, :, :, :]
 
 #######################################################################
