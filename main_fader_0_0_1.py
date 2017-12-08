@@ -32,7 +32,7 @@ from matplotlib import pyplot as plt
 #######################################################################
 
 # Supervisor params
-tag = 'fader_001a'
+tag = 'fader_001b'
 logdir = 'log/pin_celeb/{}/'.format(tag)
 imgdir = 'img/pin_celeb/{}/'.format(tag)
 
@@ -56,7 +56,7 @@ ffnn_width=n_labels*2
 ffnn_activations=[tf.tanh]
 
 # Training params
-first_iteration = 29101
+first_iteration = 1
 batch_size_x = 64 # 64  # Nubmer of samples in each training cycle, default 16
 batch_size_g = 64 # 64  # Number of generated samples, default 16
 adam_beta_1 = 0.5   # Anti-decay rate of first moment in ADAM optimizer
@@ -266,6 +266,7 @@ def fader_cnn(images, true_labels=None, counter_labels = None, n_labels=None, re
     else:
         counter_fixed_labels = estimated_labels * (1 - tf.abs(counter_labels)) + counter_labels
         counter_autoencoded, _ = Decoder(tf.concat([latent_embeddings, counter_fixed_labels], 1), input_channel=image_channels, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True, final_size=scale_size)
+        counter_autoencoded = tf.minimum( tf.maximum( counter_autoencoded, 0.), 1.)
         counter_reencoded_embeddings, _ = Encoder(counter_autoencoded, z_num=encoded_dimension, repeat_num=cnn_layers, hidden_num=node_growth_per_layer, data_format=data_format, reuse=True)
         counter_reencoded_latent_embeddings = counter_reencoded_embeddings
         counter_reencoded_scores, _ = ffnn(counter_reencoded_embeddings, num_layers=ffnn_layers, width=ffnn_width, output_dim=n_labels, activations=ffnn_activations, activate_last_layer=False, var_scope='Fader_FFNN', reuse=True)
@@ -403,17 +404,17 @@ with sv.managed_session() as sess:
         learning_rate_current = max(learning_rate_minimum,
                                     np.exp(np.log(learning_rate_initial) - step / learning_rate_decay))
         print_cycle = (step % print_interval == 0) or (step == 1)
+        image_print_cycle = (step % graph_interval == 0) or (step == 1)
         if not print_cycle:
             _, _, eval_losses = sess.run([ae_trainer, disc_trainer, losses], feed_dict={adam_learning_rate_ph: learning_rate_current})
             results[step, :] = eval_losses + [kappa]
         else:
-            image_print_cycle = (step % graph_interval == 0) or (step == 1)
             if not image_print_cycle:
-                _, _, eval_losses = sess.run([ae_trainer, disc_trainer, losses], feed_dict={adam_learning_rate_ph: learning_rate_current})
+                _, _, eval_losses, objs = sess.run([ae_trainer, disc_trainer, losses, [ae_obj, disc_obj]], feed_dict={adam_learning_rate_ph: learning_rate_current})
                 results[step, :] = eval_losses + [kappa]
-                print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
+                print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in objs + eval_losses]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
             if image_print_cycle:
-                _, _, eval_losses, output, i, l, h, e = sess.run([ae_trainer, disc_trainer, losses, 
+                _, _, eval_losses, objs, output, i, l, h, e = sess.run([ae_trainer, disc_trainer, losses, [ae_obj, disc_obj], 
                                                                   [trn['images'], trn['images'], ins['images'], oos['images'], demo['images'],
                                                                    trn['autoencoded'], trn['counter_autoencoded'], ins['autoencoded'], oos['autoencoded'], demo['autoencoded']], 
                                                                   x_trn_short, img_lbls, trn['estimated_labels'],
@@ -422,18 +423,15 @@ with sv.managed_session() as sess:
                 
                 results[step, :] = eval_losses + [kappa]
                 
-                print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in eval_losses if isinstance(val, float)]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
+                print '{} {:6d} {} {:-9.3f} {:-10.8f} {}'.format(now(), step, ' '.join(['{:-9.3f}'.format(val) for val in objs + eval_losses]), kappa, learning_rate_current, ' Graphing' if image_print_cycle else '')
                 print '  ', ', '.join(['{:6.2f}'.format(item.mean()) for item in output])
                 tmp = output[-1] + 0.
-                for idx in range(len(output)):
-                    print idx, output[idx].min(), output[idx].max()
                 
                 for idx in reversed(range(6)):
                     tmp[idx, :, :, :] -= tmp[0, :, :, :]
                 tmp = np.abs(tmp.reshape([-1, image_size, 3]))
                 for idx in range(len(output)):
                     output[idx] = output[idx][:8, :, :, :].reshape([-1, image_size, 3])
-                    # print idx, output[idx].shape
                 plot_names = ['In-Sample Production', 'In-Sample CounterFactual', 'In-Sample (fixed)', 'Out-of-Sample (fixed)',
                               'Manipulated']
                 plt.figure(figsize=[16, 8])
@@ -444,9 +442,8 @@ with sv.managed_session() as sess:
                     if image_idx == 4:
                         plt.yticks([image_size * (n + .5) for n in range(n_labels + 1)], ['None'] + label_names, rotation=90)
                 plt.subplot(1, 6, 6)
-                # plt.imshow(1. - tmp / (tmp.max() + 1e-8), interpolation='nearest')
-                # print tmp.min(), tmp.max()
-                # plt.title('Diff from base')
+                plt.imshow(1. - tmp / (tmp.max() + 1e-8), interpolation='nearest')
+                plt.title('Diff from base')
                 plt.savefig(imgdir + 'sample_images_{:06d}.png'.format(step))
                 plt.close()
                 
